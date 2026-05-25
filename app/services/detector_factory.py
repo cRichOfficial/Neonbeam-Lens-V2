@@ -13,7 +13,7 @@ def get_detector() -> BaseDetector:
     cpu = get_cpu_detector()
 
     if backend == "hailo":
-        if hailo.is_available():
+        if hailo.is_loaded() or hailo.try_load() or hailo.try_load(force=True):
             return hailo
         raise RuntimeError("Hailo backend requested but unavailable")
 
@@ -22,7 +22,7 @@ def get_detector() -> BaseDetector:
             return cpu
         raise RuntimeError("CPU backend requested but no model available")
 
-    if hailo.is_available():
+    if hailo.is_loaded() or hailo.try_load() or hailo.try_load(force=True):
         return hailo
     if cpu.is_available():
         return cpu

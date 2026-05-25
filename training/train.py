@@ -39,6 +39,7 @@ def main() -> None:
     )
     print(results)
     print(f"Best weights: {args.project / args.name / 'weights' / 'best.pt'}")
+    print("For segmentation models use: --model yolov8n-seg.pt --data data/dataset/export/segmentation/dataset.yaml")
 
 
 if __name__ == "__main__":

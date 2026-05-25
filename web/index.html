@@ -1,29 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Laser Bed Annotation (Coming Soon)</title>
-  <style>
-    body { font-family: system-ui, sans-serif; margin: 2rem; background: #111; color: #eee; }
-    .card { max-width: 720px; padding: 1.5rem; border: 1px solid #333; border-radius: 8px; }
-    code { background: #222; padding: 0.2rem 0.4rem; border-radius: 4px; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h1>Annotation UI — Phase 6 (Planned)</h1>
-    <p>
-      This page will provide live camera preview, image capture, bounding-box annotation,
-      and YOLO dataset export for custom model training.
-    </p>
-    <p>Available now:</p>
-    <ul>
-      <li><a href="/docs">API documentation</a></li>
-      <li><code>GET /api/v1/camera/stream</code> — MJPEG preview</li>
-      <li><code>GET /api/v1/camera/snapshot</code> — capture still frame</li>
-    </ul>
-  </div>
-  <script type="module" src="/annotate/src/main.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Laser Bed Annotation</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>

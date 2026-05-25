@@ -1,5 +1,10 @@
 {
-  "remoteHost": "crichards999@neonbeam-lens",
+  "remoteHost": "crichards999@neonbeam-lens.richwerks.local",
   "remotePath": "/home/crichards999/object-detection-v2",
-  "comment": "Copy this file to deploy.config.json and set remoteHost to the Pi IP if mDNS fails, e.g. crichards999@192.168.1.50"
+  "sshConnectTimeout": 15,
+  "sshRetryCount": 3,
+  "sshRetryDelaySeconds": 5,
+  "preferIpv4": false,
+  "sshClient": "auto",
+  "comment": "sshClient: auto (prefer Git for Windows), git, or windows. Interactive 'ssh host' can work even when Windows OpenSSH fails on remote commands — use sshClient git if deploy fails."
 }

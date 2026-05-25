@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
-# Deploy object-detection-v2 to neonbeam-lens via scp (Linux/macOS).
+# Deploy object-detection-v2 to neonbeam-lens.richwerks.local via scp (Linux/macOS).
 #
 # Usage:
+#   bash deploy/deploy.sh
 #   ./deploy/deploy.sh
 #   ./deploy/deploy.sh --restart
+#
+# Requires bash. If invoked as `sh deploy/deploy.sh`, re-execs under bash.
+
+if [ -z "${BASH_VERSION:-}" ]; then
+  exec bash "$0" "$@"
+fi
 
 set -euo pipefail
 
-REMOTE_HOST="${REMOTE_HOST:-crichards999@neonbeam-lens}"
+REMOTE_HOST="${REMOTE_HOST:-crichards999@neonbeam-lens.richwerks.local}"
 REMOTE_PATH="${REMOTE_PATH:-/home/crichards999/object-detection-v2}"
 RESTART=false
 
@@ -50,7 +57,7 @@ ssh "$REMOTE_HOST" "mkdir -p '${REMOTE_PATH}'"
 echo "Uploading to ${REMOTE_HOST}:${REMOTE_PATH}/${ARCHIVE_NAME} ..."
 scp "$ARCHIVE_PATH" "${REMOTE_HOST}:${REMOTE_PATH}/${ARCHIVE_NAME}"
 
-REMOTE_CMD="set -e; cd '${REMOTE_PATH}'; tar -xzf ${ARCHIVE_NAME}; rm -f ${ARCHIVE_NAME}; echo 'Deploy extract complete.'"
+REMOTE_CMD="set -e; cd '${REMOTE_PATH}'; tar -xzf ${ARCHIVE_NAME}; rm -f ${ARCHIVE_NAME}; find . -name '*.sh' -type f -exec chmod +x {} +; echo 'Deploy extract complete; shell scripts chmod +x.'"
 if $RESTART; then
   REMOTE_CMD+=" && if systemctl is-active --quiet laser-detection; then sudo systemctl restart laser-detection && echo 'Service restarted: laser-detection'; else echo 'Service laser-detection is not active (skipped restart).'; fi"
 fi

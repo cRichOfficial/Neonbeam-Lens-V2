@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response, StreamingResponse
 
 from app.schemas.camera import CameraSettingsResponse, CameraSettingsUpdate
@@ -37,9 +37,9 @@ def capture_snapshot(camera: CameraService = Depends(get_camera_service)) -> Res
     return Response(content=jpeg, media_type="image/jpeg")
 
 
-def _mjpeg_generator(camera: CameraService):
+def _mjpeg_generator(camera: CameraService, stream: str):
     boundary = b"frame"
-    for frame in camera.iter_mjpeg_frames():
+    for frame in camera.iter_mjpeg_frames(stream=stream):
         yield (
             b"--" + boundary + b"\r\n"
             b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
@@ -47,9 +47,12 @@ def _mjpeg_generator(camera: CameraService):
 
 
 @router.get("/stream")
-def camera_stream(camera: CameraService = Depends(get_camera_service)) -> StreamingResponse:
+def camera_stream(
+    size: str = Query(default="lores", pattern="^(main|lores)$"),
+    camera: CameraService = Depends(get_camera_service),
+) -> StreamingResponse:
     return StreamingResponse(
-        _mjpeg_generator(camera),
+        _mjpeg_generator(camera, stream=size),
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={
             "Cache-Control": "no-cache, private",

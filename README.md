@@ -2,7 +2,7 @@
 
 FastAPI service for a Raspberry Pi 5 laser engraver with CSI camera and Hailo-8L NPU. Provides camera control, AprilTag bed calibration, object detection/segmentation, and debug visualization.
 
-**Deployment target:** `crichards999@neonbeam-lens:~/object-detection-v2`
+**Deployment target:** `crichards999@neonbeam-lens.richwerks.local:~/object-detection-v2`
 
 ## Features
 
@@ -14,7 +14,7 @@ FastAPI service for a Raspberry Pi 5 laser engraver with CSI camera and Hailo-8L
 - Debug image overlay (tags, grid, detections)
 - Custom model training pipeline scaffold
 
-## Quick Start (neonbeam-lens)
+## Quick Start (neonbeam-lens.richwerks.local)
 
 ```bash
 cd ~/object-detection-v2
@@ -34,7 +34,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 > **Note:** `picamera2` and Hailo bindings are installed via `apt`, not `pip`. The venv **must** be created with `--system-site-packages` so those modules are visible. Without it, the service falls back to a mock camera.
 
-Open `http://neonbeam-lens:8000/docs` for interactive API documentation.
+Open `http://neonbeam-lens.richwerks.local:8000/docs` for interactive API documentation.
 
 ### Troubleshooting: mock camera warning
 
@@ -51,14 +51,33 @@ Verify with `curl http://localhost:8000/health` — `"camera": { "mode": "picame
 
 If `deploy/setup-pi.sh` fails with `$'\r': command not found`, the script has Windows line endings. Redeploy from Windows with `.\deploy\deploy.ps1` (which normalizes `.sh` files), or on the Pi run: `sed -i 's/\r$//' deploy/setup-pi.sh`
 
-## Deploy Updates (from dev machine)
+If you see `Bad substitution` or `source: not found`, you ran it with `sh` instead of `bash`. Use `bash deploy/setup-pi.sh` (or `./deploy/setup-pi.sh` after `chmod +x`). The same applies to `scripts/start.sh` — always use `bash scripts/start.sh`.
+
+### Troubleshooting: Hailo `HAILO_OUT_OF_PHYSICAL_DEVICES`
+
+The Pi has **one** Hailo NPU — only one process can open it. This error at startup usually means another copy of the app is already running:
+
+```bash
+# Check for duplicate uvicorn / systemd service
+ps aux | grep uvicorn
+sudo systemctl status laser-detection
+
+# Stop the systemd service when testing manually on another port
+sudo systemctl stop laser-detection
+uvicorn app.main:app --host 0.0.0.0 --port 8100
+```
+
+If no duplicate process is running, reboot the Pi to release a stale device handle from a crashed process. The camera and annotation UI still work without Hailo; detection falls back to CPU when a `.pt` model is available.
+
+Check status: `curl http://localhost:8100/health` → `detection.hailo.loaded` and `detection.hailo.last_error`.
+
 
 ### Windows (scp)
 
 Requires [OpenSSH Client](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh_install_firstuse) (`scp`, `ssh`, and `tar`).
 
 ```powershell
-# From project root — upload and extract on neonbeam-lens
+# From project root — upload and extract on neonbeam-lens.richwerks.local
 .\deploy\deploy.ps1
 
 # Also restart the systemd service after deploy
@@ -70,19 +89,25 @@ deploy\deploy.cmd restart
 
 The script creates a tarball (excluding `.venv`, `data/`, `models/`, `__pycache__`, etc.), normalizes shell script line endings to LF, uploads with `scp`, and extracts on the remote host.
 
-**Hostname not resolving?** Windows may not resolve `neonbeam-lens` via mDNS. Use the Pi's IP address instead:
+The script tests SSH **before** building the web UI or creating the archive, then retries transient SSH failures (timeouts, connection reset) with configurable timeouts in `deploy.config.json`.
+
+**Hostname not resolving?** Prefer the full hostname (not bare `neonbeam-lens`):
 
 ```powershell
-.\deploy\deploy.ps1 -RemoteHost "crichards999@192.168.1.50" -Restart
+.\deploy\deploy.ps1 -RemoteHost "crichards999@neonbeam-lens.richwerks.local" -Restart
 ```
+
+Avoid deploying by IP unless you have added the IP to `~/.ssh/known_hosts` — SSH keys are stored under the hostname, so `crichards999@192.168.1.120` often fails with *Host key verification failed* even when the hostname works.
 
 Or create a local config file (not committed to git):
 
 ```powershell
 copy deploy\deploy.config.example.json deploy\deploy.config.json
-# Edit deploy.config.json and set "remoteHost" to crichards999@<pi-ip-address>
+# Tune sshRetryCount / sshConnectTimeout if you see intermittent "Connection reset"
 .\deploy\deploy.ps1 -Restart
 ```
+
+**SSH `Connection reset` from Windows?** The Pi may be busy or sshd overloaded. Verify with `ssh crichards999@neonbeam-lens.richwerks.local "echo ok"`, reboot the Pi if needed, then re-run deploy.
 
 ### Linux / macOS
 
@@ -115,8 +140,39 @@ sudo systemctl enable --now laser-detection
 | POST | `/api/v1/detection/detect` | Run object detection |
 | POST | `/api/v1/detection/segment` | Run instance segmentation |
 | GET | `/api/v1/detection/debug-image` | Annotated debug JPEG |
+| GET | `/api/v1/dataset/classes` | List annotation classes |
+| PUT | `/api/v1/dataset/classes` | Update class list |
+| POST | `/api/v1/dataset/capture` | Capture frame into dataset |
+| GET | `/api/v1/dataset/images` | List captured images |
+| GET | `/api/v1/dataset/images/{id}` | Image metadata + annotations |
+| GET | `/api/v1/dataset/images/{id}/file` | JPEG file (`?variant=thumb\|preview\|full`) |
+| GET | `/api/v1/dataset/stats` | Class counts and reviewed image stats |
+| PUT | `/api/v1/dataset/images/{id}/annotations` | Save annotations |
+| PATCH | `/api/v1/dataset/images/{id}` | Mark reviewed / notes |
+| DELETE | `/api/v1/dataset/images/{id}` | Delete image |
+| POST | `/api/v1/dataset/export` | Export detection + segmentation datasets |
+| GET | `/api/v1/dataset/export/status` | Last export summary |
 
-## AprilTag PDF Printing
+## Annotation Web UI
+
+Open **`http://neonbeam-lens.richwerks.local:8000/annotate`** in a browser on the same network.
+
+Built with **React + Vite** (`web/`). Production builds go to `web/dist/` and are served by FastAPI.
+
+```bash
+# Dev (API + Vite hot reload)
+.\scripts\start.ps1          # or bash scripts/start.sh
+cd web && npm install && npm run dev
+
+# Production build (also run automatically by deploy/deploy.ps1)
+cd web && npm ci && npm run build
+```
+
+1. **Capture tab** — live camera preview (stream active only on this tab); capture frames into the dataset
+2. **Annotate tab** — draw **boxes** (most workpieces) or **polygons** (irregular parts); assign classes; mark reviewed
+3. **Export tab** — one click exports **both** YOLO detection and segmentation datasets (boxes auto-convert to 4-corner polygons for seg)
+
+See [web/README.md](web/README.md) for keyboard shortcuts, dev proxy, and performance notes.
 
 1. `POST /api/v1/calibration/apriltag/generate-pdf` with `size_mm` and `safe_zone_padding_mm`
 2. Print at **100% scale** (Actual size — disable "Fit to page")
@@ -139,14 +195,37 @@ POST /api/v1/calibration/apriltag
 
 ## Custom Model Training
 
-See [training/compile_hef.md](training/compile_hef.md) for the full workflow:
+See [training/compile_hef.md](training/compile_hef.md) for HEF compilation after training.
 
-1. Collect images via `/api/v1/camera/snapshot`
-2. Label objects (future: `/annotate` web UI)
-3. `python training/train.py`
-4. `python training/export_onnx.py models/best.pt`
-5. Compile to `.hef` on x86 with Hailo DFC
-6. Copy to `models/detection.hef` on neonbeam-lens
+### 1. Collect and label data
+
+Use the [annotation UI](http://neonbeam-lens.richwerks.local:8000/annotate) or capture via API:
+
+```bash
+curl -X POST http://neonbeam-lens.richwerks.local:8000/api/v1/dataset/capture
+```
+
+Define classes in the UI, annotate, mark images reviewed, then **Export datasets**.
+
+### 2. Train detection model
+
+```bash
+python training/train.py --data data/dataset/export/detection/dataset.yaml
+```
+
+### 3. Train segmentation model (optional)
+
+```bash
+python training/train.py --data data/dataset/export/segmentation/dataset.yaml --model yolov8n-seg.pt
+```
+
+### 4. Deploy to Pi
+
+```bash
+python training/export_onnx.py models/best.pt
+# Compile to .hef on x86 — see training/compile_hef.md
+# Copy models/detection.hef to neonbeam-lens.richwerks.local
+```
 
 ## Configuration
 
@@ -162,6 +241,4 @@ uvicorn app.main:app --reload
 
 Without picamera2/Hailo hardware, the service uses a mock camera and CPU detection when a model is available.
 
-## Future: Annotation Web UI
-
-Phase 6 will add a browser-based labeling tool at `/annotate`. See [web/README.md](web/README.md).
+Run the API with `.\scripts\start.ps1`, then `cd web && npm run dev` for the annotation UI at `http://localhost:5173/annotate/`, or build with `npm run build` and open `http://localhost:8000/annotate`.

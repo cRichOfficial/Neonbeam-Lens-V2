@@ -143,6 +143,15 @@ class MockCameraBackend(CameraBackend):
             yield jpeg
             time.sleep(1 / 15)
 
+    def iter_lores_mjpeg_frames(self):
+        while self._started:
+            frame = self.capture_lores_frame()
+            ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+            if not ok:
+                raise RuntimeError("Failed to encode mock lores JPEG")
+            yield encoded.tobytes()
+            time.sleep(1 / 15)
+
 
 class Picamera2Backend(CameraBackend):
     def __init__(self, config_store: ConfigStore) -> None:
@@ -279,6 +288,16 @@ class Picamera2Backend(CameraBackend):
             if frame is not None:
                 yield frame
 
+    def iter_lores_mjpeg_frames(self):
+        while self._started:
+            frame = self.capture_lores_frame()
+            bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR) if frame.shape[2] == 3 else frame
+            ok, encoded = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+            if not ok:
+                raise RuntimeError("Failed to encode lores JPEG")
+            yield encoded.tobytes()
+            time.sleep(1 / 15)
+
 
 class CameraService:
     def __init__(self, config_store: ConfigStore | None = None) -> None:
@@ -374,8 +393,11 @@ class CameraService:
     def capture_lores_frame(self) -> np.ndarray:
         return self.backend.capture_lores_frame()
 
-    def iter_mjpeg_frames(self):
-        yield from self.backend.iter_mjpeg_frames()
+    def iter_mjpeg_frames(self, stream: str = "main"):
+        if stream == "lores":
+            yield from self.backend.iter_lores_mjpeg_frames()
+        else:
+            yield from self.backend.iter_mjpeg_frames()
 
 
 _camera_service: CameraService | None = None

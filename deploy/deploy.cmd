@@ -1,5 +1,5 @@
 @echo off
-REM Deploy to neonbeam-lens using scp (Windows wrapper).
+REM Deploy to neonbeam-lens.richwerks.local using scp (Windows wrapper).
 REM Usage:
 REM   deploy\deploy.cmd
 REM   deploy\deploy.cmd restart

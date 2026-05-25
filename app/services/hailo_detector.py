@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from pathlib import Path
 
 import cv2
@@ -11,6 +13,10 @@ from app.schemas.common import BoundingBox, Point2D
 from app.services.cpu_detector import BaseDetector, RawDetection
 
 logger = logging.getLogger(__name__)
+
+# After a failed init (e.g. device busy), wait before retrying to avoid log spam
+# and repeated vdevice open attempts that can disturb the camera pipeline.
+_INIT_RETRY_COOLDOWN_S = 60.0
 
 COCO_LABELS = [
     "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
@@ -25,6 +31,17 @@ COCO_LABELS = [
     "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier",
     "toothbrush",
 ]
+
+
+def _format_load_error(exc: Exception) -> str:
+    msg = str(exc)
+    if "HAILO_OUT_OF_PHYSICAL_DEVICES" in msg or "error: 74" in msg:
+        return (
+            f"{msg} — the Hailo NPU is already in use or unavailable. "
+            "Stop duplicate app instances (e.g. `sudo systemctl stop laser-detection` "
+            "when running manual uvicorn), or reboot if a crashed process left the device locked."
+        )
+    return msg
 
 
 def _resolve_hef_path() -> Path | None:
@@ -47,55 +64,94 @@ class HailoDetector(BaseDetector):
         self._model_path: Path | None = None
         self._input_size = (640, 640)
         self._labels = COCO_LABELS
+        self._lock = threading.Lock()
+        self._last_error: str | None = None
+        self._retry_after = 0.0
 
-    def _ensure_loaded(self) -> bool:
+    def is_loaded(self) -> bool:
+        return self._hailo is not None
+
+    def get_status(self) -> dict[str, str | bool | None]:
+        return {
+            "loaded": self.is_loaded(),
+            "model_path": str(self._model_path) if self._model_path else None,
+            "last_error": self._last_error,
+        }
+
+    def try_load(self, *, force: bool = False) -> bool:
+        with self._lock:
+            return self._load_locked(force=force)
+
+    def _load_locked(self, *, force: bool = False) -> bool:
         if self._hailo is not None:
             return True
+
+        now = time.monotonic()
+        if not force and self._last_error and now < self._retry_after:
+            return False
+
         model_path = _resolve_hef_path()
         if model_path is None:
+            self._last_error = "no HEF model found"
             return False
+
+        hailo = None
         try:
             from picamera2.devices import Hailo
 
-            self._hailo = Hailo(str(model_path))
+            hailo = Hailo(str(model_path))
+            model_h, model_w, _ = hailo.get_input_shape()
+            self._hailo = hailo
             self._model_path = model_path
-            model_h, model_w, _ = self._hailo.get_input_shape()
             self._input_size = (model_w, model_h)
+            self._last_error = None
+            self._retry_after = 0.0
             logger.info("Loaded Hailo model from %s", model_path)
             return True
         except Exception as exc:
-            logger.warning("Hailo unavailable: %s", exc)
+            if hailo is not None:
+                try:
+                    hailo.close()
+                except Exception:
+                    pass
             self._hailo = None
+            self._last_error = _format_load_error(exc)
+            self._retry_after = now + _INIT_RETRY_COOLDOWN_S
+            logger.warning("Hailo unavailable: %s", self._last_error)
             return False
 
     def is_available(self) -> bool:
-        return self._ensure_loaded()
+        return self.try_load()
 
     def close(self) -> None:
-        if self._hailo is not None:
-            try:
-                self._hailo.close()
-            except Exception:
-                pass
-            self._hailo = None
+        with self._lock:
+            if self._hailo is not None:
+                try:
+                    self._hailo.close()
+                except Exception:
+                    pass
+                self._hailo = None
 
     def detect(self, frame: np.ndarray, confidence_threshold: float) -> list[RawDetection]:
-        if not self._ensure_loaded() or self._hailo is None:
-            return []
+        with self._lock:
+            if not self._load_locked():
+                return []
+            if self._hailo is None:
+                return []
 
-        resized = cv2.resize(frame, self._input_size)
-        if resized.ndim == 3 and resized.shape[2] == 3:
-            inference_frame = resized
-        else:
-            inference_frame = cv2.cvtColor(resized, cv2.COLOR_GRAY2RGB)
+            resized = cv2.resize(frame, self._input_size)
+            if resized.ndim == 3 and resized.shape[2] == 3:
+                inference_frame = resized
+            else:
+                inference_frame = cv2.cvtColor(resized, cv2.COLOR_GRAY2RGB)
 
-        results = self._hailo.run(inference_frame)
-        return self._parse_hailo_results(
-            results,
-            frame.shape[1],
-            frame.shape[0],
-            confidence_threshold,
-        )
+            results = self._hailo.run(inference_frame)
+            return self._parse_hailo_results(
+                results,
+                frame.shape[1],
+                frame.shape[0],
+                confidence_threshold,
+            )
 
     def _parse_hailo_results(
         self,

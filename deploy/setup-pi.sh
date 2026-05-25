@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 # First-time Raspberry Pi setup for object-detection-v2.
-# Run on neonbeam-lens after deploying the project files.
+# Run on neonbeam-lens.richwerks.local after deploying the project files.
 #
 # Usage:
 #   cd ~/object-detection-v2
 #   bash deploy/setup-pi.sh
+#
+# Requires bash. If invoked as `sh deploy/setup-pi.sh`, re-execs under bash.
+
+if [ -z "${BASH_VERSION:-}" ]; then
+  exec bash "$0" "$@"
+fi
 
 set -euo pipefail
 

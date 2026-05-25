@@ -12,3 +12,6 @@ models/*.onnx
 *.log
 .DS_Store
 deploy/deploy.config.json
+.env
+web/node_modules/
+web/dist/

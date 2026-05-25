@@ -47,11 +47,11 @@ hailomz optimize --har models/detection.har --calib-path data/dataset/images/tra
 hailomz compile --har models/detection.har --hw-arch hailo8l --output-dir models/
 ```
 
-### 6. Deploy to neonbeam-lens
+### 6. Deploy to neonbeam-lens.richwerks.local
 
 ```bash
-scp models/detection.hef crichards999@neonbeam-lens:~/object-detection-v2/models/
-ssh crichards999@neonbeam-lens "sudo systemctl restart laser-detection"
+scp models/detection.hef crichards999@neonbeam-lens.richwerks.local:~/object-detection-v2/models/
+ssh crichards999@neonbeam-lens.richwerks.local "sudo systemctl restart laser-detection"
 ```
 
 Update `config/default.yaml` if the model filename differs.

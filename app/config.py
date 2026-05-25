@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -101,11 +101,17 @@ class AppConfig(BaseModel):
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="LASER_", env_nested_delimiter="__")
+    model_config = SettingsConfigDict(
+        env_prefix="LASER_",
+        env_nested_delimiter="__",
+        env_file=PROJECT_ROOT / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     config_path: Path = DEFAULT_CONFIG_PATH
-    host: str = "0.0.0.0"
-    port: int = 8000
+    host: str = Field(default="0.0.0.0", validation_alias=AliasChoices("HOST", "LASER_HOST", "host"))
+    port: int = Field(default=8000, validation_alias=AliasChoices("PORT", "LASER_PORT", "port"))
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

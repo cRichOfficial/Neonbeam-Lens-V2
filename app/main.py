@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.calibration import router as calibration_router
 from app.api.camera import router as camera_router
+from app.api.dataset import router as dataset_router
 from app.api.detection import router as detection_router
 from app.config import PROJECT_ROOT, get_config_store
 from app.services.calibration_service import get_calibration_service
@@ -23,10 +24,23 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     logging.basicConfig(level=logging.INFO)
     camera = get_camera_service()
+    config = get_config_store().config.detection
+
+    # picamera2 Hailo examples open the NPU before Picamera2 in the same process.
+    if config.backend in ("auto", "hailo"):
+        hailo = get_hailo_detector()
+        if not hailo.try_load():
+            logger.warning(
+                "Hailo not loaded at startup (%s); camera and annotation UI will still run. "
+                "Detection will fall back to CPU if a model is available.",
+                hailo.get_status().get("last_error") or "unknown error",
+            )
+
     camera.start()
+
     yield
-    get_hailo_detector().close()
     camera.stop()
+    get_hailo_detector().close()
 
 
 def create_app() -> FastAPI:
@@ -40,8 +54,10 @@ def create_app() -> FastAPI:
     app.include_router(camera_router)
     app.include_router(calibration_router)
     app.include_router(detection_router)
+    app.include_router(dataset_router)
 
-    web_dir = PROJECT_ROOT / "web"
+    web_dist = PROJECT_ROOT / "web" / "dist"
+    web_dir = web_dist if web_dist.exists() else PROJECT_ROOT / "web"
     if web_dir.exists():
         app.mount("/annotate", StaticFiles(directory=str(web_dir), html=True), name="annotate")
 
@@ -52,9 +68,10 @@ def create_app() -> FastAPI:
         hailo = get_hailo_detector()
         cpu = get_cpu_detector()
         config = get_config_store().config
+        hailo_status = hailo.get_status()
 
         backend = "none"
-        if hailo.is_available():
+        if hailo.is_loaded():
             backend = "hailo"
         elif cpu.is_available():
             backend = "cpu"
@@ -80,6 +97,7 @@ def create_app() -> FastAPI:
             "detection": {
                 "backend": backend,
                 "configured_backend": config.detection.backend,
+                "hailo": hailo_status,
             },
         }
 
