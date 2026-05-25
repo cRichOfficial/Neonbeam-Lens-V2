@@ -1,0 +1,16 @@
+[Unit]
+Description=Laser Engraver Object Detection API
+After=network.target
+
+[Service]
+Type=simple
+User=crichards999
+Group=crichards999
+WorkingDirectory=/home/crichards999/object-detection-v2
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/crichards999/object-detection-v2/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

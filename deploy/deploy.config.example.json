@@ -1,0 +1,5 @@
+{
+  "remoteHost": "crichards999@neonbeam-lens",
+  "remotePath": "/home/crichards999/object-detection-v2",
+  "comment": "Copy this file to deploy.config.json and set remoteHost to the Pi IP if mDNS fails, e.g. crichards999@192.168.1.50"
+}

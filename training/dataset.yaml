@@ -1,0 +1,10 @@
+path: ../data/dataset
+train: images/train
+val: images/val
+
+nc: 0
+names: []
+
+# Define classes before training, for example:
+# nc: 3
+# names: ['wood_blank', 'metal_tag', 'jig_fixture']

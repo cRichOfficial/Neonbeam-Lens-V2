@@ -1,0 +1,31 @@
+bed:
+  width_mm: 400
+  height_mm: 400
+camera:
+  mount_height_mm: 360
+  exposure_us: 10000
+  analogue_gain: 1.0
+  main_resolution: [1920, 1080]
+  lores_resolution: [640, 640]
+apriltag:
+  family: tag36h11
+  default_size_mm: 20
+  default_safe_zone_padding_mm: 5
+  pdf_page_size: letter
+  pdf_page_margin_mm: 10
+detection:
+  model_path: ~/object-detection-v2/models/detection.hef
+  cpu_model_path: ~/object-detection-v2/models/best.pt
+  segmentation_model_path: ~/object-detection-v2/models/segmentation.hef
+  confidence_threshold: 0.5
+  nms_iou_threshold: 0.45
+  backend: auto
+parallax:
+  default_object_height_mm: 0
+calibration:
+  max_reprojection_error_mm: 2.0
+  storage_path: config/calibration.json
+dataset:
+  storage_path: data/dataset
+  train_val_split: 0.8
+  classes: []

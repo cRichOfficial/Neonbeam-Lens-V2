@@ -1,0 +1,11 @@
+# Shell scripts must use LF line endings (bash on Linux/Pi breaks with CRLF).
+*.sh text eol=lf
+deploy/setup-pi.sh text eol=lf
+deploy/deploy.sh text eol=lf
+
+# Windows scripts keep CRLF.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+
+# Default: auto.
+* text=auto
