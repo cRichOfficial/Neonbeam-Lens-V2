@@ -18,11 +18,14 @@ def expand_path(value: str) -> Path:
     return Path(os.path.expanduser(value)).resolve()
 
 
-class BedConfig(BaseModel):
-    width_mm: float = 400
-    height_mm: float = 400
+class BedFrameConfig(BaseModel):
     origin: Literal["bottom_left", "top_left"] = "bottom_left"
     y_axis: Literal["up", "down"] = "up"
+
+
+class BedConfig(BedFrameConfig):
+    width_mm: float
+    height_mm: float
 
 
 class CameraIntrinsicsOverride(BaseModel):
@@ -82,6 +85,9 @@ class ParallaxConfig(BaseModel):
 
 class CalibrationConfig(BaseModel):
     max_reprojection_error_mm: float = 2.0
+    scale_refinement_max_iterations: int = 8
+    scale_refinement_tolerance_mm: float = 0.5
+    max_tag_size_error_mm: float = 1.0
     storage_path: str = "config/calibration.json"
 
     @property
@@ -106,7 +112,7 @@ class DatasetConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
-    bed: BedConfig = Field(default_factory=BedConfig)
+    bed: BedFrameConfig = Field(default_factory=BedFrameConfig)
     camera: CameraConfig = Field(default_factory=CameraConfig)
     apriltag: ApriltagConfig = Field(default_factory=ApriltagConfig)
     detection: DetectionConfig = Field(default_factory=DetectionConfig)

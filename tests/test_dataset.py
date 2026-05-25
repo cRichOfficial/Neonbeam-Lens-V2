@@ -23,8 +23,8 @@ def dataset_env(tmp_path, monkeypatch):
     config_path.write_text(
         f"""
 bed:
-  width_mm: 400
-  height_mm: 400
+  origin: bottom_left
+  y_axis: up
 camera:
   mount_height_mm: 360
   exposure_us: 10000

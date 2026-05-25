@@ -6,7 +6,7 @@ from typing import Literal
 import cv2
 import numpy as np
 
-from app.config import BedConfig
+from app.config import BedConfig, BedFrameConfig
 
 # pupil-apriltags ideal tag corners in tag y-up frame: UL, UR, LR, LL
 PUPIL_IDEAL_TAG_CORNERS = np.array(
@@ -15,7 +15,7 @@ PUPIL_IDEAL_TAG_CORNERS = np.array(
 )
 
 
-def frame_description(bed: BedConfig) -> str:
+def frame_description(bed: BedFrameConfig) -> str:
     return f"origin={bed.origin}, y_axis={bed.y_axis}"
 
 

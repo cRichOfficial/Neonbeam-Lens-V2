@@ -136,6 +136,7 @@ sudo systemctl enable --now laser-detection
 | POST | `/api/v1/calibration/apriltag` | Calibrate from AprilTag specs |
 | GET | `/api/v1/calibration/status` | Calibration status |
 | POST | `/api/v1/calibration/apriltag/preview` | Tag detection preview image |
+| GET | `/api/v1/calibration/apriltag/debug-image` | Calibrated grid + tags overlay with side lengths (no object detection) |
 | POST | `/api/v1/calibration/apriltag/generate-pdf` | Print-ready AprilTag sheet |
 | POST | `/api/v1/detection/detect` | Run object detection |
 | POST | `/api/v1/detection/segment` | Run instance segmentation |
@@ -181,30 +182,33 @@ See [web/README.md](web/README.md) for keyboard shortcuts, dev proxy, and perfor
 
 ## Calibration Example
 
-Bed coordinates default to **origin bottom-left**, **+x right**, **+y up** (`bed.origin: bottom_left`, `bed.y_axis: up` in `config/default.yaml`). Override for other machines if needed.
+Mount AprilTags at the **four corners** of the work area with tag **centers** on the corners. The origin tag center becomes bed `(0, 0)`. Bed coordinates use **origin bottom-left**, **+x right**, **+y up** (`bed.origin: bottom_left`, `bed.y_axis: up` in `config/default.yaml`).
 
-| Tag ID | Bed position | Corner |
-|--------|--------------|--------|
-| 0 | `(0, 0)` | bottom-left |
-| 1 | `(400, 0)` | bottom-right |
-| 2 | `(0, 400)` | top-left |
-| 3 | `(400, 400)` | top-right |
+| Tag ID | Typical corner |
+|--------|----------------|
+| 0 | bottom-left (origin) |
+| 1 | bottom-right |
+| 2 | top-left |
+| 3 | top-right |
 
-`x_mm` / `y_mm` are the **tag center** (not a corner). `size_mm` is the **printed black square edge** — measure with calipers; do not use the dashed cut-line outer dimension.
-
-Place all tags with the **same orientation as the generated PDF** (use optional `rotation_deg` per tag if rotated).
+`size_mm` is the **printed black square edge** — measure with calipers; do not use the dashed cut-line outer dimension. Neighbor tags (BR, TL, TR) are identified automatically from geometry; IDs need not follow this table if `origin_tag_id` is set correctly.
 
 ```json
 POST /api/v1/calibration/apriltag
 {
-  "tags": [
-    {"id": 0, "x_mm": 0, "y_mm": 0, "size_mm": 30},
-    {"id": 1, "x_mm": 400, "y_mm": 0, "size_mm": 30},
-    {"id": 2, "x_mm": 0, "y_mm": 400, "size_mm": 30},
-    {"id": 3, "x_mm": 400, "y_mm": 400, "size_mm": 30}
-  ]
+  "origin_tag_id": 0,
+  "size_mm": 30,
+  "tag_ids": [0, 1, 2, 3]
 }
 ```
+
+The response includes a `work_area` block with derived `width_mm` and `height_mm`, plus `tag_size_validation` showing per-tag measured edge lengths after scale refinement. These are saved in `config/calibration.json` and drive the debug grid overlay.
+
+`size_mm` is treated as ground truth. Calibration uses **per-axis scale** from horizontal vs vertical tag edges (important at wide FOV) and iterates width/height independently until tag edges measure the declared size on both axes (within `calibration.scale_refinement_tolerance_mm`, default 0.5 mm). Work-area width/height are re-derived from the final homography before save. If refinement cannot fully converge, calibration still saves but the response `message` includes a warning — check print quality, tag flatness, and detection.
+
+The `tag_size_validation` block includes `mm_per_px_x`, `mm_per_px_y`, `mean_horizontal_mm`, `mean_vertical_mm`, and per-axis iteration counts.
+
+Use `GET /api/v1/calibration/apriltag/debug-image` to overlay per-tag measured sizes (`30 mm (meas 29.8)`) and work-area side lengths.
 
 Use `POST /api/v1/calibration/apriltag/preview` to verify detections; corner indices `0–3` are drawn on each tag. On failure, the API returns structured JSON with center vs corner error breakdown.
 
@@ -221,6 +225,7 @@ Successful calibration responses and `GET /api/v1/calibration/status` include a 
 | `center_error_mm` | Mean residual on tag centers (global homography) |
 | `corner_error_mm` | Mean residual on all 16 corners (global homography) |
 | `per_tag_errors_mm` | Mean corner residual per tag ID |
+| `tag_size_validation` | Per-tag measured edge length vs `size_mm`; horizontal/vertical means; `mm_per_px_x`/`y`; `converged` |
 
 If `center_error_mm` is low but `corner_error_mm` is high (~30 mm), lens distortion is the likely cause — ensure `hfov_deg` matches your module and re-run calibration. Optional manual override:
 
@@ -268,7 +273,7 @@ python training/export_onnx.py models/best.pt
 
 ## Configuration
 
-Edit [config/default.yaml](config/default.yaml) for bed size, camera height, model paths, and detection thresholds.
+Edit [config/default.yaml](config/default.yaml) for bed coordinate frame (`origin`, `y_axis`), camera height, model paths, and detection thresholds. Work area size is not configured — it is derived from AprilTag corner placement during calibration.
 
 ## Development (Windows/x86)
 

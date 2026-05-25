@@ -1,6 +1,4 @@
 bed:
-  width_mm: 400.0
-  height_mm: 400.0
   origin: bottom_left
   y_axis: up
 camera:
@@ -41,6 +39,9 @@ parallax:
   default_object_height_mm: 0.0
 calibration:
   max_reprojection_error_mm: 2.0
+  scale_refinement_max_iterations: 8
+  scale_refinement_tolerance_mm: 0.5
+  max_tag_size_error_mm: 1.0
   storage_path: config/calibration.json
 dataset:
   storage_path: data/dataset
