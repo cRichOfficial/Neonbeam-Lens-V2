@@ -181,16 +181,55 @@ See [web/README.md](web/README.md) for keyboard shortcuts, dev proxy, and perfor
 
 ## Calibration Example
 
+Bed coordinates default to **origin bottom-left**, **+x right**, **+y up** (`bed.origin: bottom_left`, `bed.y_axis: up` in `config/default.yaml`). Override for other machines if needed.
+
+| Tag ID | Bed position | Corner |
+|--------|--------------|--------|
+| 0 | `(0, 0)` | bottom-left |
+| 1 | `(400, 0)` | bottom-right |
+| 2 | `(0, 400)` | top-left |
+| 3 | `(400, 400)` | top-right |
+
+`x_mm` / `y_mm` are the **tag center** (not a corner). `size_mm` is the **printed black square edge** — measure with calipers; do not use the dashed cut-line outer dimension.
+
+Place all tags with the **same orientation as the generated PDF** (use optional `rotation_deg` per tag if rotated).
+
 ```json
 POST /api/v1/calibration/apriltag
 {
   "tags": [
-    {"id": 0, "x_mm": 0, "y_mm": 0, "size_mm": 20},
-    {"id": 1, "x_mm": 400, "y_mm": 0, "size_mm": 20},
-    {"id": 2, "x_mm": 0, "y_mm": 400, "size_mm": 20},
-    {"id": 3, "x_mm": 400, "y_mm": 400, "size_mm": 20}
+    {"id": 0, "x_mm": 0, "y_mm": 0, "size_mm": 30},
+    {"id": 1, "x_mm": 400, "y_mm": 0, "size_mm": 30},
+    {"id": 2, "x_mm": 0, "y_mm": 400, "size_mm": 30},
+    {"id": 3, "x_mm": 400, "y_mm": 400, "size_mm": 30}
   ]
 }
+```
+
+Use `POST /api/v1/calibration/apriltag/preview` to verify detections; corner indices `0–3` are drawn on each tag. On failure, the API returns structured JSON with center vs corner error breakdown.
+
+Automated tests in `tests/test_calibration.py` use synthetic tag geometry only (mock detector, no camera). After deploying to the Pi, re-run calibration there to validate with real lens distortion.
+
+### Lens distortion (wide-angle cameras)
+
+The CSI camera defaults to **102° horizontal FOV** (`camera.hfov_deg` in `config/default.yaml`). Wide-angle lenses show barrel distortion — tag **centers** may fit a homography while **corners** do not. When `camera.auto_distortion: true` (default), calibration auto-estimates pinhole distortion coefficients `k1`/`k2` from all 16 tag corners, undistorts image points before fitting homography, and stores intrinsics in `config/calibration.json`.
+
+Successful calibration responses and `GET /api/v1/calibration/status` include a `distortion` block (`fx`, `fy`, `cx`, `cy`, `k1`, `k2`, `hfov_deg`).
+
+| Error field | Meaning |
+|-------------|---------|
+| `center_error_mm` | Mean residual on tag centers (global homography) |
+| `corner_error_mm` | Mean residual on all 16 corners (global homography) |
+| `per_tag_errors_mm` | Mean corner residual per tag ID |
+
+If `center_error_mm` is low but `corner_error_mm` is high (~30 mm), lens distortion is the likely cause — ensure `hfov_deg` matches your module and re-run calibration. Optional manual override:
+
+```yaml
+camera:
+  hfov_deg: 102
+  auto_distortion: false
+  intrinsics_override:
+    dist: [-0.25, 0.05, 0, 0, 0]   # k1, k2, p1, p2, k3
 ```
 
 ## Custom Model Training

@@ -9,10 +9,11 @@ from app.schemas.calibration import (
     AprilTagPdfRequest,
     CalibrationResult,
     CalibrationStatusResponse,
+    DistortionSummary,
 )
 from app.services.apriltag_pdf_service import generate_apriltag_pdf
 from app.services.apriltag_service import get_apriltag_service
-from app.services.calibration_service import CalibrationService, get_calibration_service
+from app.services.calibration_service import CalibrationError, CalibrationService, get_calibration_service
 from app.services.camera_service import CameraService, get_camera_service
 
 router = APIRouter(prefix="/api/v1/calibration", tags=["calibration"])
@@ -35,15 +36,21 @@ def calibrate_apriltags(
     frame = camera.capture_frame()
     try:
         result, matched = calibration.calibrate(frame, payload.tags, persist=True)
+    except CalibrationError as exc:
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
 
+    distortion = (
+        DistortionSummary(**result.intrinsics.summary()) if result.intrinsics else None
+    )
     return CalibrationResult(
         success=True,
         timestamp=result.timestamp,
         reprojection_error_mm=result.reprojection_error_mm,
         tags_detected=matched,
         message="Calibration saved",
+        distortion=distortion,
     )
 
 

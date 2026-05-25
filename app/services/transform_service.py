@@ -5,6 +5,12 @@ import numpy as np
 from app.config import get_config_store
 from app.schemas.common import BoundingBox, Point2D
 from app.services.calibration_service import CalibrationService, get_calibration_service
+from app.services.camera_intrinsics import (
+    CameraIntrinsics,
+    distort_points,
+    resolve_camera_intrinsics,
+    undistort_points,
+)
 
 
 class TransformService:
@@ -32,6 +38,27 @@ class TransformService:
             raise RuntimeError("Calibration required before coordinate transform")
         return data.principal_point_px
 
+    def _intrinsics(self) -> CameraIntrinsics:
+        data = self.calibration_service.data
+        if data is None:
+            raise RuntimeError("Calibration required before coordinate transform")
+        if data.intrinsics is not None:
+            return data.intrinsics
+
+        config = get_config_store().config.camera
+        width, height = config.main_resolution
+        return resolve_camera_intrinsics(
+            image_width=width,
+            image_height=height,
+            hfov_deg=config.hfov_deg,
+            distortion_model=config.distortion_model,
+            override_fx=config.intrinsics_override.fx,
+            override_fy=config.intrinsics_override.fy,
+            override_cx=config.intrinsics_override.cx,
+            override_cy=config.intrinsics_override.cy,
+            override_dist=config.intrinsics_override.dist,
+        )
+
     def px_to_mm(self, points_px: np.ndarray, object_height_mm: float = 0.0) -> np.ndarray:
         points = np.asarray(points_px, dtype=np.float32)
         if points.ndim == 1:
@@ -39,8 +66,15 @@ class TransformService:
         if points.ndim == 2 and points.shape[1] != 2:
             raise ValueError("points_px must have shape (N, 2)")
 
+        intrinsics = self._intrinsics()
+        undist = undistort_points(
+            points,
+            intrinsics.camera_matrix,
+            intrinsics.dist_coeffs,
+            intrinsics.distortion_model,
+        )
         homography = self._homography()
-        transformed = cv2_perspective(homography, points)
+        transformed = cv2_perspective(homography, undist)
 
         if object_height_mm > 0:
             config = get_config_store().config
@@ -58,7 +92,14 @@ class TransformService:
         if points.ndim == 1:
             points = points.reshape(1, 2)
         inverse_h = self._inverse_homography()
-        return cv2_perspective(inverse_h, points)
+        undist = cv2_perspective(inverse_h, points)
+        intrinsics = self._intrinsics()
+        return distort_points(
+            undist,
+            intrinsics.camera_matrix,
+            intrinsics.dist_coeffs,
+            intrinsics.distortion_model,
+        )
 
     def _pixel_delta_to_mm(
         self, delta_x_px: float, delta_y_px: float, px: float, py: float

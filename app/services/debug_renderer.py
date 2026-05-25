@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 
 from app.config import get_config_store
-from app.schemas.common import Point2D
+from app.services.bed_frame import bed_boundary_corners_mm
 from app.schemas.detection import DetectionItem
 from app.services.apriltag_service import get_apriltag_service
 from app.services.calibration_service import get_calibration_service
@@ -83,10 +83,8 @@ class DebugRenderer:
         return encoded.tobytes()
 
     def _draw_bed_boundary(self, frame: np.ndarray, transform, width_mm: float, height_mm: float) -> np.ndarray:
-        corners_mm = np.array(
-            [[0, 0], [width_mm, 0], [width_mm, height_mm], [0, height_mm]],
-            dtype=np.float32,
-        )
+        config = get_config_store().config
+        corners_mm = bed_boundary_corners_mm(config.bed)
         corners_px = transform.mm_to_px(corners_mm).astype(np.int32)
         cv2.polylines(frame, [corners_px], True, (255, 0, 255), 2)
         return frame

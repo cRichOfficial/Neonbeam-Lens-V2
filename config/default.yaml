@@ -1,27 +1,44 @@
 bed:
-  width_mm: 400
-  height_mm: 400
+  width_mm: 400.0
+  height_mm: 400.0
+  origin: bottom_left
+  y_axis: up
 camera:
-  mount_height_mm: 360
-  exposure_us: 10000
+  mount_height_mm: 360.0
+  exposure_us: 20000
   analogue_gain: 1.0
-  main_resolution: [1920, 1080]
-  lores_resolution: [640, 640]
+  main_resolution:
+  - 1920
+  - 1080
+  lores_resolution:
+  - 640
+  - 640
+  hfov_deg: 102
+  distortion_model: pinhole
+  auto_distortion: true
+  intrinsics_override:
+    fx: null
+    fy: null
+    cx: null
+    cy: null
+    dist: null
 apriltag:
   family: tag36h11
-  default_size_mm: 20
-  default_safe_zone_padding_mm: 5
+  default_size_mm: 20.0
+  default_safe_zone_padding_mm: 5.0
   pdf_page_size: letter
-  pdf_page_margin_mm: 10
+  pdf_page_margin_mm: 10.0
+  quad_decimate: 1.0
 detection:
   model_path: ~/object-detection-v2/models/detection.hef
   cpu_model_path: ~/object-detection-v2/models/best.pt
   segmentation_model_path: ~/object-detection-v2/models/segmentation.hef
+  hailo_fallback_model: /usr/share/hailo-models/yolov8s_h8l.hef
   confidence_threshold: 0.5
   nms_iou_threshold: 0.45
   backend: auto
 parallax:
-  default_object_height_mm: 0
+  default_object_height_mm: 0.0
 calibration:
   max_reprojection_error_mm: 2.0
   storage_path: config/calibration.json

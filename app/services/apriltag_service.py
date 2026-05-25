@@ -25,8 +25,13 @@ class AprilTagService:
         if family not in self._detectors:
             import pupil_apriltags as apriltag
 
+            config = get_config_store().config.apriltag
             tag_family = APRILTAG_FAMILIES.get(family, family)
-            self._detectors[family] = apriltag.Detector(families=tag_family)
+            self._detectors[family] = apriltag.Detector(
+                families=tag_family,
+                quad_decimate=config.quad_decimate,
+                refine_edges=1,
+            )
         return self._detectors[family]
 
     def detect(self, frame: np.ndarray, family: str | None = None) -> list[dict[str, Any]]:
@@ -50,7 +55,13 @@ class AprilTagService:
             )
         return results
 
-    def draw_detections(self, frame: np.ndarray, detections: list[dict[str, Any]]) -> np.ndarray:
+    def draw_detections(
+        self,
+        frame: np.ndarray,
+        detections: list[dict[str, Any]],
+        *,
+        label_corners: bool = True,
+    ) -> np.ndarray:
         output = frame.copy()
         if output.ndim == 2:
             output = cv2.cvtColor(output, cv2.COLOR_GRAY2RGB)
@@ -69,6 +80,20 @@ class AprilTagService:
                 2,
                 cv2.LINE_AA,
             )
+            if label_corners:
+                for idx, corner in enumerate(corners):
+                    cx, cy = int(corner[0]), int(corner[1])
+                    cv2.circle(output, (cx, cy), 5, (0, 200, 255), -1)
+                    cv2.putText(
+                        output,
+                        str(idx),
+                        (cx + 6, cy - 6),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.55,
+                        (0, 200, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
         return output
 
 

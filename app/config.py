@@ -21,6 +21,16 @@ def expand_path(value: str) -> Path:
 class BedConfig(BaseModel):
     width_mm: float = 400
     height_mm: float = 400
+    origin: Literal["bottom_left", "top_left"] = "bottom_left"
+    y_axis: Literal["up", "down"] = "up"
+
+
+class CameraIntrinsicsOverride(BaseModel):
+    fx: float | None = None
+    fy: float | None = None
+    cx: float | None = None
+    cy: float | None = None
+    dist: list[float] | None = None
 
 
 class CameraConfig(BaseModel):
@@ -29,6 +39,10 @@ class CameraConfig(BaseModel):
     analogue_gain: float = 1.0
     main_resolution: list[int] = Field(default_factory=lambda: [1920, 1080])
     lores_resolution: list[int] = Field(default_factory=lambda: [640, 640])
+    hfov_deg: float = 102.0
+    distortion_model: Literal["pinhole", "fisheye"] = "pinhole"
+    auto_distortion: bool = True
+    intrinsics_override: CameraIntrinsicsOverride = Field(default_factory=CameraIntrinsicsOverride)
 
 
 class ApriltagConfig(BaseModel):
@@ -37,6 +51,7 @@ class ApriltagConfig(BaseModel):
     default_safe_zone_padding_mm: float = 5
     pdf_page_size: str = "letter"
     pdf_page_margin_mm: float = 10
+    quad_decimate: float = 1.0
 
 
 class DetectionConfig(BaseModel):
