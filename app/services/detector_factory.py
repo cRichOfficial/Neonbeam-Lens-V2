@@ -1,29 +1,24 @@
 from __future__ import annotations
 
 from app.config import get_config_store
-from app.services.cpu_detector import BaseDetector, CPUDetector, get_cpu_detector
-from app.services.hailo_detector import HailoDetector, get_hailo_detector
+from app.services.cpu_detector import BaseDetector, get_cpu_detector
 
 
 def get_detector() -> BaseDetector:
     config = get_config_store().config.detection
     backend = config.backend
-
-    hailo = get_hailo_detector()
     cpu = get_cpu_detector()
 
     if backend == "hailo":
-        if hailo.is_loaded() or hailo.try_load() or hailo.try_load(force=True):
-            return hailo
-        raise RuntimeError("Hailo backend requested but unavailable")
+        raise RuntimeError(
+            "NPU is reserved for the FastSAM shapes pipeline; use detection.backend: cpu or auto"
+        )
 
     if backend == "cpu":
         if cpu.is_available():
             return cpu
         raise RuntimeError("CPU backend requested but no model available")
 
-    if hailo.is_loaded() or hailo.try_load() or hailo.try_load(force=True):
-        return hailo
     if cpu.is_available():
         return cpu
     return cpu

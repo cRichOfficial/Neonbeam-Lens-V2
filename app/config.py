@@ -79,6 +79,27 @@ class DetectionConfig(BaseModel):
         return expand_path(self.segmentation_model_path)
 
 
+class ShapesConfig(BaseModel):
+    backend: Literal["auto", "classical", "fastsam"] = "auto"
+    fastsam_model_path: str = "~/object-detection-v2/models/fast_sam_s.hef"
+    fastsam_fallback_model: str = "/usr/share/hailo-models/fast_sam_s.hef"
+    min_confidence: float = 0.35
+    classical_fallback_confidence: float = 0.4
+    min_area_mm2: float = 400.0
+    max_area_mm2: float = 80000.0
+    min_solidity: float = 0.75
+    min_extent: float = 0.35
+    circularity_threshold: float = 0.82
+    rounded_rect_circularity_min: float = 0.65
+    bracelet_min_aspect: float = 6.0
+    roi_margin_mm: float = 5.0
+    max_edge_px: int = 1024
+
+    @property
+    def resolved_fastsam_model_path(self) -> Path:
+        return expand_path(self.fastsam_model_path)
+
+
 class ParallaxConfig(BaseModel):
     default_object_height_mm: float = 0
 
@@ -116,6 +137,7 @@ class AppConfig(BaseModel):
     camera: CameraConfig = Field(default_factory=CameraConfig)
     apriltag: ApriltagConfig = Field(default_factory=ApriltagConfig)
     detection: DetectionConfig = Field(default_factory=DetectionConfig)
+    shapes: ShapesConfig = Field(default_factory=ShapesConfig)
     parallax: ParallaxConfig = Field(default_factory=ParallaxConfig)
     calibration: CalibrationConfig = Field(default_factory=CalibrationConfig)
     dataset: DatasetConfig = Field(default_factory=DatasetConfig)

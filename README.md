@@ -55,21 +55,32 @@ If you see `Bad substitution` or `source: not found`, you ran it with `sh` inste
 
 ### Troubleshooting: Hailo `HAILO_OUT_OF_PHYSICAL_DEVICES`
 
-The Pi has **one** Hailo NPU — only one process can open it. This error at startup usually means another copy of the app is already running:
+**First check: is the AI HAT installed?** Error 74 with `found: 0` is normal when no Hailo hardware is connected:
 
 ```bash
-# Check for duplicate uvicorn / systemd service
-ps aux | grep uvicorn
-sudo systemctl status laser-detection
-
-# Stop the systemd service when testing manually on another port
-sudo systemctl stop laser-detection
-uvicorn app.main:app --host 0.0.0.0 --port 8100
+hailortcli fw-control identify
+ls -l /dev/hailo*
 ```
 
-If no duplicate process is running, reboot the Pi to release a stale device handle from a crashed process. The camera and annotation UI still work without Hailo; detection falls back to CPU when a `.pt` model is available.
+If the HAT is not installed, FastSAM cannot load — shapes still work via **classical CV only**. Install the HAT on the Pi 5 PCIe connector, reboot, and re-run `hailortcli fw-control identify`.
 
-Check status: `curl http://localhost:8100/health` → `detection.hailo.loaded` and `detection.hailo.last_error`.
+`/health` → `npu.hardware.present` should be `true` when the device is detected.
+
+When the HAT **is** installed, this app uses **direct VDevice access** (picamera2-style). **`hailort.service` must be stopped**:
+
+```bash
+sudo systemctl stop hailort.service
+sudo systemctl disable hailort.service
+```
+
+Duplicate **app instances** also cause `found: 0`:
+
+```bash
+sudo systemctl stop laser-detection
+bash scripts/start.sh --stop-service
+```
+
+Check status: `curl http://localhost:8100/health` → `npu.hardware`, `npu.hailort_service`, `npu.models.fastsam`.
 
 
 ### Windows (scp)
@@ -140,6 +151,10 @@ sudo systemctl enable --now laser-detection
 | POST | `/api/v1/calibration/apriltag/generate-pdf` | Print-ready AprilTag sheet |
 | POST | `/api/v1/detection/detect` | Run object detection |
 | POST | `/api/v1/detection/segment` | Run instance segmentation |
+| POST | `/api/v1/detection/shapes` | Classical CV shape detection (mm geometry + rotation) |
+| GET | `/api/v1/detection/work-area-image` | Rectified bed JPEG (AprilTags at corners) |
+| GET | `/api/v1/detection/work-area-image/info` | Work-area image scale and mm→px mapping |
+| GET | `/api/v1/detection/shapes/debug-image` | Pipeline stage JPEG (`stage=all` for tiled mosaic) |
 | GET | `/api/v1/detection/debug-image` | Annotated debug JPEG |
 | GET | `/api/v1/dataset/classes` | List annotation classes |
 | PUT | `/api/v1/dataset/classes` | Update class list |
@@ -270,6 +285,27 @@ python training/export_onnx.py models/best.pt
 # Compile to .hef on x86 — see training/compile_hef.md
 # Copy models/detection.hef to neonbeam-lens.richwerks.local
 ```
+
+## Shape detection (classical CV + FastSAM)
+
+Requires calibration with a derived `work_area`. Detects flat geometric workpieces (coasters, cards, bracelets) without YOLO training.
+
+`POST /api/v1/detection/shapes` returns per-object geometry in **bed millimeters**: `bbox_mm`, `width_mm`, `height_mm`, `rotation_deg`, `oriented_box_mm`, `segmentation_polygon_mm`. Set `include_work_area_coords: true` for pixel coords on the aligned work-area image.
+
+`GET /api/v1/detection/work-area-image` returns a rectified JPEG: work area warped so AprilTag corners align to the image edges (origin tag at bottom-left). Companion `GET .../work-area-image/info` documents `pixels_per_mm` and mm→px mapping (`y_px = (height_mm - y_mm) * pixels_per_mm`).
+
+`GET /api/v1/detection/shapes/debug-image?stage=...` exposes pipeline stages (`raw`, `warp`, `mask`, `contours`, `shapes`, `fastsam`, `final`, or `all` for a labeled tiled mosaic). Tune thresholds under `shapes:` in `config/default.yaml`.
+
+FastSAM fallback uses `shapes.fastsam_model_path` on the Hailo-8L when classical CV finds no objects or low confidence (`shapes.backend: auto`).
+
+## Work surface prep
+
+Matte black is a good default for light and colored parts. **Do not use a checkerboard pattern** on the bed — it creates false contours.
+
+- **Angled LED bar** (best ROI): rim-light edges for black slate and dark anodized parts
+- **Per-object gray mat** under black slate when needed
+- Optional **mid-gray matte recoat** if dark-on-dark is frequent
+- AprilTags at corners already define the ROI; optional tape border inside tags for clipping only
 
 ## Configuration
 

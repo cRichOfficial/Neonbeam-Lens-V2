@@ -11,7 +11,7 @@ camera:
   lores_resolution:
   - 640
   - 640
-  hfov_deg: 102
+  hfov_deg: 102.0
   distortion_model: pinhole
   auto_distortion: true
   intrinsics_override:
@@ -35,6 +35,21 @@ detection:
   confidence_threshold: 0.5
   nms_iou_threshold: 0.45
   backend: auto
+shapes:
+  backend: auto
+  fastsam_model_path: ~/object-detection-v2/models/fast_sam_s.hef
+  fastsam_fallback_model: /usr/share/hailo-models/fast_sam_s.hef
+  min_confidence: 0.35
+  classical_fallback_confidence: 0.4
+  min_area_mm2: 400.0
+  max_area_mm2: 80000.0
+  min_solidity: 0.75
+  min_extent: 0.35
+  circularity_threshold: 0.82
+  rounded_rect_circularity_min: 0.65
+  bracelet_min_aspect: 6.0
+  roi_margin_mm: 5.0
+  max_edge_px: 1024
 parallax:
   default_object_height_mm: 0.0
 calibration:

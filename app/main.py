@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -15,7 +14,13 @@ from app.config import PROJECT_ROOT, get_config_store
 from app.services.calibration_service import get_calibration_service
 from app.services.camera_service import get_camera_service
 from app.services.cpu_detector import get_cpu_detector
-from app.services.hailo_detector import get_hailo_detector
+from app.services.fastsam_detector import FASTSAM_MODEL_KEY, get_fastsam_detector, resolve_fastsam_path
+from app.services.hailo_diagnostics import (
+    detect_npu_blockers,
+    detect_npu_warnings,
+    format_blocker_message,
+)
+from app.services.hailo_npu import get_hailo_npu
 
 logger = logging.getLogger(__name__)
 
@@ -24,23 +29,30 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     logging.basicConfig(level=logging.INFO)
     camera = get_camera_service()
-    config = get_config_store().config.detection
+    npu = get_hailo_npu()
+    shapes_cfg = get_config_store().config.shapes
 
     # picamera2 Hailo examples open the NPU before Picamera2 in the same process.
-    if config.backend in ("auto", "hailo"):
-        hailo = get_hailo_detector()
-        if not hailo.try_load():
+    if shapes_cfg.backend in ("auto", "fastsam"):
+        for warning in detect_npu_warnings():
+            logger.warning(warning)
+
+        blockers = detect_npu_blockers()
+        if blockers:
+            npu.set_preflight_blockers(blockers)
+            logger.error(format_blocker_message(blockers))
+        elif not npu.load_model(FASTSAM_MODEL_KEY, resolve_fastsam_path()):
             logger.warning(
-                "Hailo not loaded at startup (%s); camera and annotation UI will still run. "
-                "Detection will fall back to CPU if a model is available.",
-                hailo.get_status().get("last_error") or "unknown error",
+                "FastSAM not loaded at startup (%s); shapes will use classical CV only "
+                "unless FastSAM becomes available later.",
+                npu.get_status().get("last_error") or "unknown error",
             )
 
     camera.start()
 
     yield
     camera.stop()
-    get_hailo_detector().close()
+    npu.close_all()
 
 
 def create_app() -> FastAPI:
@@ -65,16 +77,11 @@ def create_app() -> FastAPI:
     def health_check() -> dict:
         camera = get_camera_service()
         calibration = get_calibration_service()
-        hailo = get_hailo_detector()
         cpu = get_cpu_detector()
         config = get_config_store().config
-        hailo_status = hailo.get_status()
+        npu_status = get_hailo_npu().get_status()
 
-        backend = "none"
-        if hailo.is_loaded():
-            backend = "hailo"
-        elif cpu.is_available():
-            backend = "cpu"
+        backend = "cpu" if cpu.is_available() else "none"
 
         camera_hint = None
         if camera.is_mock():
@@ -97,7 +104,15 @@ def create_app() -> FastAPI:
             "detection": {
                 "backend": backend,
                 "configured_backend": config.detection.backend,
-                "hailo": hailo_status,
+                "hailo": {
+                    "enabled": False,
+                    "reason": "NPU reserved for FastSAM shapes pipeline",
+                },
+            },
+            "npu": npu_status,
+            "shapes": {
+                "configured_backend": config.shapes.backend,
+                "fastsam": get_fastsam_detector().get_status(),
             },
         }
 

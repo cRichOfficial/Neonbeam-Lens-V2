@@ -26,6 +26,9 @@ def test_health(client: TestClient) -> None:
     assert payload["status"] == "ok"
     assert "camera" in payload
     assert "calibration" in payload
+    assert "npu" in payload
+    assert payload["detection"]["hailo"]["enabled"] is False
+    assert "shapes" in payload
 
 
 def test_camera_settings(client: TestClient) -> None:

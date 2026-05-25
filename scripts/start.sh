@@ -32,6 +32,11 @@ done
 
 ensure_no_device_conflict() {
   if command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-active --quiet hailort.service 2>/dev/null; then
+      echo "Stopping hailort.service (required for direct NPU access)..."
+      sudo systemctl stop hailort.service
+    fi
+
     if systemctl is-active --quiet laser-detection 2>/dev/null; then
       if $STOP_SERVICE; then
         echo "Stopping laser-detection systemd service..."
