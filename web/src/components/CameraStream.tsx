@@ -19,7 +19,7 @@ export function CameraStream({ active }: CameraStreamProps) {
   return (
     <div className="preview-wrap">
       {active && src ? (
-        <img src={src} alt="Camera stream" />
+        <img src={src} alt="Camera stream" className="preview-stream" />
       ) : (
         <p className="muted">Camera stream paused (switch to Capture tab to view)</p>
       )}

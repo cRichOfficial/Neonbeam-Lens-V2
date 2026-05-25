@@ -1,10 +1,13 @@
 import { useAnnotationCanvas } from "../hooks/useAnnotationCanvas";
 import type { ActiveTool, AnnotationShape } from "../api/types";
 
-interface CanvasApi {
+export interface CanvasApi {
   finishPolygon: () => void;
   cancelPolygonDraft: () => void;
+  undoLastPolygonPoint: () => void;
   deleteSelected: () => boolean;
+  resetView: () => void;
+  getPolygonDraftLength: () => number;
 }
 
 interface AnnotationCanvasProps {
@@ -34,10 +37,14 @@ export function AnnotationCanvas({
     containerRef,
     imgRef,
     overlayRef,
+    letterboxStyle,
     handleImageLoad,
     finishPolygon,
     cancelPolygonDraft,
+    undoLastPolygonPoint,
     deleteSelected,
+    resetView,
+    getPolygonDraftLength,
   } = useAnnotationCanvas({
     imageUrl,
     annotations,
@@ -49,19 +56,36 @@ export function AnnotationCanvas({
     onBeforeChange,
   });
 
-  canvasApiRef.current = { finishPolygon, cancelPolygonDraft, deleteSelected };
+  canvasApiRef.current = {
+    finishPolygon,
+    cancelPolygonDraft,
+    undoLastPolygonPoint,
+    deleteSelected,
+    resetView,
+    getPolygonDraftLength,
+  };
 
   return (
-    <div className="panel canvas-wrap" ref={containerRef}>
+    <div className="image-stage panel" ref={containerRef}>
       {imageUrl ? (
-        <img
-          ref={imgRef}
-          src={imageUrl}
-          alt="Annotation target"
-          className="canvas-still"
-          onLoad={handleImageLoad}
-          draggable={false}
-        />
+        <div
+          className="image-stage__letterbox"
+          style={{
+            left: letterboxStyle.left,
+            top: letterboxStyle.top,
+            width: letterboxStyle.width,
+            height: letterboxStyle.height,
+          }}
+        >
+          <img
+            ref={imgRef}
+            src={imageUrl}
+            alt="Annotation target"
+            className="canvas-still"
+            onLoad={handleImageLoad}
+            draggable={false}
+          />
+        </div>
       ) : null}
       <canvas ref={overlayRef} className="canvas-overlay" />
     </div>

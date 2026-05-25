@@ -52,6 +52,28 @@ Output goes to `web/dist/`. FastAPI serves this folder at `/annotate`. The deplo
 | Undo | `Ctrl+Z` | Undo last annotation change |
 | Class | `1-9` | Select active class |
 
+Keyboard shortcuts are **desktop only**. On mobile, use the bottom toolbar and sheet instead.
+
+## Mobile annotation
+
+On viewports **768px wide or narrower**, the app switches to a mobile layout:
+
+- **Bottom tab bar** — Capture, Annotate, and Export stay thumb-reachable with safe-area padding.
+- **Canvas first** — The annotate view fills the screen; no scrolling past a sidebar to reach the image.
+- **Bottom toolbar** — Box/Polygon toggle, active class chip, prev/next image, undo/delete when applicable, **Finish polygon** and **Undo last point** while drawing, **Reset view** when zoomed, and **Menu** to open the sheet.
+- **Bottom sheet** — Image list, classes (add/select), annotation list, reviewed checkbox, save/delete image.
+
+### Touch interactions
+
+- **Box** — Drag to draw (same as desktop mouse drag).
+- **Polygon** — Tap to add vertices; tap **Finish** in the toolbar (or use Enter / double-click on desktop).
+- **Select / move** — Tap an annotation or drag a vertex; hit targets are enlarged for touch.
+- **Pinch-to-zoom** — Two-finger pinch zooms 1×–5× around the pinch center; annotations stay aligned with the image.
+- **Pan when zoomed** — Two-finger drag, or one-finger drag on empty canvas when zoomed in.
+- **Reset view** — Toolbar button returns to fit-to-screen (1×, centered).
+
+Images are always **letterboxed** (`object-fit: contain`); zoom scales uniformly and never stretches the aspect ratio.
+
 ## Stack
 
 - React 19 + TypeScript + Vite

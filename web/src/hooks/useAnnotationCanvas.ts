@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AnnotationShape, ActiveTool, BoundingBox, Point2D } from "../api/types";
 import { bboxFromPoints, bboxFromPolygon, classColor, clamp01, uuid } from "../utils/geometry";
 
@@ -7,6 +7,19 @@ export interface CanvasLayout {
   offsetY: number;
   drawWidth: number;
   drawHeight: number;
+}
+
+export interface ViewTransform {
+  scale: number;
+  panX: number;
+  panY: number;
+}
+
+export interface LetterboxStyle {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
 }
 
 export interface UseAnnotationCanvasOptions {
@@ -20,7 +33,16 @@ export interface UseAnnotationCanvasOptions {
   onBeforeChange: () => void;
 }
 
-type DragMode = "create-bbox" | "move" | "vertex" | null;
+type DragMode = "create-bbox" | "move" | "vertex" | "pan-view" | null;
+
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 5;
+const TOUCH_HIT_PX = 24;
+const MOUSE_HIT_PX = 8;
+
+function clampZoom(scale: number): number {
+  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, scale));
+}
 
 export function useAnnotationCanvas({
   imageUrl,
@@ -36,6 +58,16 @@ export function useAnnotationCanvas({
   const imgRef = useRef<HTMLImageElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const layoutRef = useRef<CanvasLayout>({ offsetX: 0, offsetY: 0, drawWidth: 0, drawHeight: 0 });
+  const viewRef = useRef<ViewTransform>({ scale: 1, panX: 0, panY: 0 });
+  const letterboxStyleRef = useRef<LetterboxStyle>({ left: 0, top: 0, width: 0, height: 0 });
+  const [letterboxStyle, setLetterboxStyle] = useState<LetterboxStyle>({
+    left: 0,
+    top: 0,
+    width: 0,
+    height: 0,
+  });
+  const [viewTransform, setViewTransform] = useState<ViewTransform>({ scale: 1, panX: 0, panY: 0 });
+
   const dragModeRef = useRef<DragMode>(null);
   const dragStartRef = useRef<Record<string, unknown> | null>(null);
   const tempBboxRef = useRef<BoundingBox | null>(null);
@@ -43,22 +75,67 @@ export function useAnnotationCanvas({
   const annotationsRef = useRef(annotations);
   const rafRef = useRef<number | null>(null);
   const draggingRef = useRef(false);
+  const gestureModeRef = useRef(false);
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const pinchStartRef = useRef<{
+    distance: number;
+    scale: number;
+    panX: number;
+    panY: number;
+    centroidX: number;
+    centroidY: number;
+  } | null>(null);
+  const lastPointerTypeRef = useRef<string>("mouse");
 
   if (!draggingRef.current) {
     annotationsRef.current = annotations;
   }
 
-  const imageToCanvas = useCallback((x: number, y: number) => {
+  const applyViewTransform = useCallback((next: ViewTransform) => {
+    viewRef.current = next;
+    setViewTransform(next);
     const { offsetX, offsetY, drawWidth, drawHeight } = layoutRef.current;
-    return { x: offsetX + x * drawWidth, y: offsetY + y * drawHeight };
+    if (drawWidth <= 0 || drawHeight <= 0) return;
+    const cx = offsetX + drawWidth / 2;
+    const cy = offsetY + drawHeight / 2;
+    const w = drawWidth * next.scale;
+    const h = drawHeight * next.scale;
+    const style = {
+      left: cx - w / 2 + next.panX,
+      top: cy - h / 2 + next.panY,
+      width: w,
+      height: h,
+    };
+    letterboxStyleRef.current = style;
+    setLetterboxStyle(style);
+  }, []);
+
+  const recomputeLetterboxFromLayout = useCallback(() => {
+    applyViewTransform(viewRef.current);
+  }, [applyViewTransform]);
+
+  const imageToCanvas = useCallback((x: number, y: number) => {
+    const { left, top, width, height } = letterboxStyleRef.current;
+    return { x: left + x * width, y: top + y * height };
   }, []);
 
   const canvasToImage = useCallback((x: number, y: number) => {
-    const { offsetX, offsetY, drawWidth, drawHeight } = layoutRef.current;
+    const { left, top, width, height } = letterboxStyleRef.current;
+    if (width <= 0 || height <= 0) return { x: 0, y: 0 };
     return {
-      x: clamp01((x - offsetX) / drawWidth),
-      y: clamp01((y - offsetY) / drawHeight),
+      x: clamp01((x - left) / width),
+      y: clamp01((y - top) / height),
     };
+  }, []);
+
+  const layoutCenter = useCallback(() => {
+    const { offsetX, offsetY, drawWidth, drawHeight } = layoutRef.current;
+    return { cx: offsetX + drawWidth / 2, cy: offsetY + drawHeight / 2 };
+  }, []);
+
+  const hitRadius = useCallback(() => {
+    const base = lastPointerTypeRef.current === "touch" ? TOUCH_HIT_PX : MOUSE_HIT_PX;
+    return base / Math.max(viewRef.current.scale, 0.001);
   }, []);
 
   const syncLayout = useCallback(() => {
@@ -69,17 +146,11 @@ export function useAnnotationCanvas({
     const scale = Math.min(rect.width / img.naturalWidth, rect.height / img.naturalHeight);
     const drawWidth = img.naturalWidth * scale;
     const drawHeight = img.naturalHeight * scale;
-    layoutRef.current = {
-      offsetX: (rect.width - drawWidth) / 2,
-      offsetY: (rect.height - drawHeight) / 2,
-      drawWidth,
-      drawHeight,
-    };
-    img.style.left = `${layoutRef.current.offsetX}px`;
-    img.style.top = `${layoutRef.current.offsetY}px`;
-    img.style.width = `${drawWidth}px`;
-    img.style.height = `${drawHeight}px`;
-  }, []);
+    const offsetX = (rect.width - drawWidth) / 2;
+    const offsetY = (rect.height - drawHeight) / 2;
+    layoutRef.current = { offsetX, offsetY, drawWidth, drawHeight };
+    recomputeLetterboxFromLayout();
+  }, [recomputeLetterboxFromLayout]);
 
   const drawOverlay = useCallback(() => {
     const canvas = overlayRef.current;
@@ -109,6 +180,8 @@ export function useAnnotationCanvas({
       return;
     }
 
+    const radius = hitRadius();
+
     const drawAnn = (ann: AnnotationShape) => {
       const color = classColor(ann.class_id);
       const selected = ann.id === selectedId;
@@ -130,7 +203,7 @@ export function useAnnotationCanvas({
           const c = imageToCanvas(p.x, p.y);
           ctx.fillStyle = color;
           ctx.beginPath();
-          ctx.arc(c.x, c.y, selected ? 5 : 4, 0, Math.PI * 2);
+          ctx.arc(c.x, c.y, selected ? radius * 0.6 : radius * 0.45, 0, Math.PI * 2);
           ctx.fill();
         });
       } else if (ann.bbox) {
@@ -156,6 +229,7 @@ export function useAnnotationCanvas({
     const tempPoly = tempPolygonRef.current;
     if (tempPoly.length) {
       ctx.strokeStyle = "#fff";
+      ctx.fillStyle = "#ffffff88";
       ctx.beginPath();
       tempPoly.forEach((p, idx) => {
         const c = imageToCanvas(p.x, p.y);
@@ -163,8 +237,14 @@ export function useAnnotationCanvas({
         else ctx.lineTo(c.x, c.y);
       });
       ctx.stroke();
+      tempPoly.forEach((p) => {
+        const c = imageToCanvas(p.x, p.y);
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, radius * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+      });
     }
-  }, [imageToCanvas, selectedId]);
+  }, [hitRadius, imageToCanvas, selectedId]);
 
   const scheduleOverlay = useCallback(() => {
     if (rafRef.current !== null) return;
@@ -176,12 +256,15 @@ export function useAnnotationCanvas({
 
   const hitTest = useCallback(
     (x: number, y: number) => {
+      const radius = hitRadius();
       for (let i = annotationsRef.current.length - 1; i >= 0; i -= 1) {
         const ann = annotationsRef.current[i];
         if (ann.type === "polygon" && ann.polygon.length) {
           for (let v = 0; v < ann.polygon.length; v += 1) {
             const c = imageToCanvas(ann.polygon[v].x, ann.polygon[v].y);
-            if (Math.hypot(c.x - x, c.y - y) < 8) return { kind: "vertex" as const, ann, index: v };
+            if (Math.hypot(c.x - x, c.y - y) < radius) {
+              return { kind: "vertex" as const, ann, index: v };
+            }
           }
         }
         if (ann.bbox) {
@@ -194,7 +277,7 @@ export function useAnnotationCanvas({
       }
       return null;
     },
-    [imageToCanvas],
+    [hitRadius, imageToCanvas],
   );
 
   const finishPolygon = useCallback(() => {
@@ -222,6 +305,12 @@ export function useAnnotationCanvas({
     scheduleOverlay();
   }, [scheduleOverlay]);
 
+  const undoLastPolygonPoint = useCallback(() => {
+    if (!tempPolygonRef.current.length) return;
+    tempPolygonRef.current = tempPolygonRef.current.slice(0, -1);
+    scheduleOverlay();
+  }, [scheduleOverlay]);
+
   const deleteSelected = useCallback(() => {
     if (!selectedId) return false;
     onBeforeChange();
@@ -233,14 +322,22 @@ export function useAnnotationCanvas({
     return true;
   }, [onCommit, onBeforeChange, onSelect, scheduleOverlay, selectedId]);
 
+  const resetView = useCallback(() => {
+    applyViewTransform({ scale: 1, panX: 0, panY: 0 });
+    scheduleOverlay();
+  }, [applyViewTransform, scheduleOverlay]);
+
+  const getPolygonDraftLength = useCallback(() => tempPolygonRef.current.length, []);
+
   const handleImageLoad = useCallback(() => {
+    resetView();
     syncLayout();
     scheduleOverlay();
-  }, [scheduleOverlay, syncLayout]);
+  }, [resetView, scheduleOverlay, syncLayout]);
 
   useEffect(() => {
     scheduleOverlay();
-  }, [annotations, selectedId, imageUrl, scheduleOverlay]);
+  }, [annotations, selectedId, imageUrl, viewTransform, scheduleOverlay]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -255,19 +352,68 @@ export function useAnnotationCanvas({
 
   useEffect(() => {
     const overlay = overlayRef.current;
-    if (!overlay) return;
+    const container = containerRef.current;
+    if (!overlay || !container) return;
 
-    const pointerPos = (event: MouseEvent) => {
+    const pointerPos = (event: PointerEvent) => {
       const rect = overlay.getBoundingClientRect();
       return { x: event.clientX - rect.left, y: event.clientY - rect.top };
     };
 
-    const onMouseDown = (event: MouseEvent) => {
+    const pointerDistance = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+      Math.hypot(a.x - b.x, a.y - b.y);
+
+    const pointerCentroid = (points: { x: number; y: number }[]) => {
+      const sum = points.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
+      return { x: sum.x / points.length, y: sum.y / points.length };
+    };
+
+    const updatePinch = () => {
+      const points = [...pointersRef.current.values()];
+      if (points.length < 2 || !pinchStartRef.current) return;
+      const start = pinchStartRef.current;
+      const dist = pointerDistance(points[0], points[1]);
+      const centroid = pointerCentroid(points);
+      const nextScale = clampZoom(start.scale * (dist / start.distance));
+      const { cx, cy } = layoutCenter();
+      const scaleRatio = nextScale / start.scale;
+      const panX = start.panX + (centroid.x - start.centroidX) - (start.centroidX - cx - start.panX) * (scaleRatio - 1);
+      const panY = start.panY + (centroid.y - start.centroidY) - (start.centroidY - cy - start.panY) * (scaleRatio - 1);
+      applyViewTransform({ scale: nextScale, panX, panY });
+      scheduleOverlay();
+    };
+
+    const onPointerDown = (event: PointerEvent) => {
+      lastPointerTypeRef.current = event.pointerType;
+      const { x, y } = pointerPos(event);
+      pointersRef.current.set(event.pointerId, { x, y });
+
+      if (pointersRef.current.size >= 2) {
+        gestureModeRef.current = true;
+        dragModeRef.current = null;
+        draggingRef.current = false;
+        tempBboxRef.current = null;
+        const points = [...pointersRef.current.values()];
+        const view = viewRef.current;
+        pinchStartRef.current = {
+          distance: pointerDistance(points[0], points[1]),
+          scale: view.scale,
+          panX: view.panX,
+          panY: view.panY,
+          centroidX: pointerCentroid(points).x,
+          centroidY: pointerCentroid(points).y,
+        };
+        overlay.setPointerCapture(event.pointerId);
+        event.preventDefault();
+        return;
+      }
+
       const img = imgRef.current;
       if (!img?.naturalWidth) return;
-      const { x, y } = pointerPos(event);
+
       const imagePt = canvasToImage(x, y);
       const hit = hitTest(x, y);
+      const zoomed = viewRef.current.scale > 1.01;
 
       if (hit?.kind === "vertex") {
         onBeforeChange();
@@ -275,6 +421,8 @@ export function useAnnotationCanvas({
         dragModeRef.current = "vertex";
         dragStartRef.current = { annId: hit.ann.id, vertexIndex: hit.index, x, y };
         onSelect(hit.ann.id);
+        overlay.setPointerCapture(event.pointerId);
+        event.preventDefault();
         scheduleOverlay();
         return;
       }
@@ -289,7 +437,24 @@ export function useAnnotationCanvas({
           orig: structuredClone(hit.ann),
         };
         onSelect(hit.ann.id);
+        overlay.setPointerCapture(event.pointerId);
+        event.preventDefault();
         scheduleOverlay();
+        return;
+      }
+
+      if (zoomed && !hit) {
+        draggingRef.current = true;
+        dragModeRef.current = "pan-view";
+        dragStartRef.current = {
+          x,
+          y,
+          panX: viewRef.current.panX,
+          panY: viewRef.current.panY,
+        };
+        overlay.setPointerCapture(event.pointerId);
+        event.preventDefault();
+        onSelect(null);
         return;
       }
 
@@ -299,29 +464,57 @@ export function useAnnotationCanvas({
         dragModeRef.current = "create-bbox";
         dragStartRef.current = imagePt;
         tempBboxRef.current = bboxFromPoints(imagePt.x, imagePt.y, imagePt.x, imagePt.y);
+        overlay.setPointerCapture(event.pointerId);
       } else {
         tempPolygonRef.current = [...tempPolygonRef.current, imagePt];
       }
+      event.preventDefault();
       scheduleOverlay();
     };
 
-    const onMouseMove = (event: MouseEvent) => {
-      if (!dragModeRef.current || !imgRef.current?.naturalWidth) return;
+    const onPointerMove = (event: PointerEvent) => {
+      if (!pointersRef.current.has(event.pointerId)) return;
       const { x, y } = pointerPos(event);
+      pointersRef.current.set(event.pointerId, { x, y });
+
+      if (gestureModeRef.current && pointersRef.current.size >= 2) {
+        updatePinch();
+        event.preventDefault();
+        return;
+      }
+
+      if (!dragModeRef.current || !imgRef.current?.naturalWidth) return;
       const imagePt = canvasToImage(x, y);
       const mode = dragModeRef.current;
       const start = dragStartRef.current;
 
+      if (mode === "pan-view" && start && "panX" in start) {
+        applyViewTransform({
+          scale: viewRef.current.scale,
+          panX: (start.panX as number) + (x - (start.x as number)),
+          panY: (start.panY as number) + (y - (start.y as number)),
+        });
+        scheduleOverlay();
+        event.preventDefault();
+        return;
+      }
+
       if (mode === "create-bbox" && start && "x" in start && "y" in start) {
-        tempBboxRef.current = bboxFromPoints(start.x as number, start.y as number, imagePt.x, imagePt.y);
+        tempBboxRef.current = bboxFromPoints(
+          start.x as number,
+          start.y as number,
+          imagePt.x,
+          imagePt.y,
+        );
         scheduleOverlay();
         return;
       }
 
       if (mode === "move" && start && "orig" in start) {
         const orig = start.orig as AnnotationShape;
-        const dx = (x - (start.x as number)) / layoutRef.current.drawWidth;
-        const dy = (y - (start.y as number)) / layoutRef.current.drawHeight;
+        const { width, height } = letterboxStyleRef.current;
+        const dx = (x - (start.x as number)) / width;
+        const dy = (y - (start.y as number)) / height;
         annotationsRef.current = annotationsRef.current.map((ann) => {
           if (ann.id !== start.annId) return ann;
           const moved: AnnotationShape = {
@@ -356,7 +549,26 @@ export function useAnnotationCanvas({
       }
     };
 
-    const onMouseUp = () => {
+    const onPointerUp = (event: PointerEvent) => {
+      pointersRef.current.delete(event.pointerId);
+      if (pointersRef.current.size < 2) {
+        gestureModeRef.current = false;
+        pinchStartRef.current = null;
+      }
+      if (pointersRef.current.size >= 2) {
+        const points = [...pointersRef.current.values()];
+        const view = viewRef.current;
+        pinchStartRef.current = {
+          distance: pointerDistance(points[0], points[1]),
+          scale: view.scale,
+          panX: view.panX,
+          panY: view.panY,
+          centroidX: pointerCentroid(points).x,
+          centroidY: pointerCentroid(points).y,
+        };
+        return;
+      }
+
       const mode = dragModeRef.current;
       if (mode === "create-bbox" && tempBboxRef.current) {
         const box = tempBboxRef.current;
@@ -394,22 +606,44 @@ export function useAnnotationCanvas({
       finishPolygon();
     };
 
-    overlay.addEventListener("mousedown", onMouseDown);
-    overlay.addEventListener("mousemove", onMouseMove);
-    overlay.addEventListener("mouseup", onMouseUp);
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const rect = overlay.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      const view = viewRef.current;
+      const delta = event.deltaY > 0 ? 0.9 : 1.1;
+      const nextScale = clampZoom(view.scale * delta);
+      const { cx, cy } = layoutCenter();
+      const scaleRatio = nextScale / view.scale;
+      const panX = view.panX + (x - cx - view.panX) * (1 - scaleRatio);
+      const panY = view.panY + (y - cy - view.panY) * (1 - scaleRatio);
+      applyViewTransform({ scale: nextScale, panX, panY });
+      scheduleOverlay();
+    };
+
+    overlay.addEventListener("pointerdown", onPointerDown);
+    overlay.addEventListener("pointermove", onPointerMove);
+    overlay.addEventListener("pointerup", onPointerUp);
+    overlay.addEventListener("pointercancel", onPointerUp);
     overlay.addEventListener("dblclick", onDoubleClick);
+    container.addEventListener("wheel", onWheel, { passive: false });
     return () => {
-      overlay.removeEventListener("mousedown", onMouseDown);
-      overlay.removeEventListener("mousemove", onMouseMove);
-      overlay.removeEventListener("mouseup", onMouseUp);
+      overlay.removeEventListener("pointerdown", onPointerDown);
+      overlay.removeEventListener("pointermove", onPointerMove);
+      overlay.removeEventListener("pointerup", onPointerUp);
+      overlay.removeEventListener("pointercancel", onPointerUp);
       overlay.removeEventListener("dblclick", onDoubleClick);
+      container.removeEventListener("wheel", onWheel);
     };
   }, [
     activeClassId,
     activeTool,
+    applyViewTransform,
     canvasToImage,
     finishPolygon,
     hitTest,
+    layoutCenter,
     onCommit,
     onBeforeChange,
     onSelect,
@@ -420,10 +654,15 @@ export function useAnnotationCanvas({
     containerRef,
     imgRef,
     overlayRef,
+    letterboxStyle,
+    viewTransform,
     imageUrl,
     handleImageLoad,
     finishPolygon,
     cancelPolygonDraft,
+    undoLastPolygonPoint,
     deleteSelected,
+    resetView,
+    getPolygonDraftLength,
   };
 }

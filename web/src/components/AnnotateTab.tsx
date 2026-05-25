@@ -2,9 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { ActiveTool, AnnotationShape } from "../api/types";
-import { classColor } from "../utils/geometry";
 import { useToast } from "../hooks/useToast";
-import { AnnotationCanvas } from "./AnnotationCanvas";
+import { MOBILE_BREAKPOINT, useMediaQuery } from "../hooks/useMediaQuery";
+import { AnnotationCanvas, type CanvasApi } from "./AnnotationCanvas";
+import { AnnotateSidebar } from "./annotate/AnnotateSidebar";
+import { MobileAnnotateSheet } from "./annotate/MobileAnnotateSheet";
+import { MobileAnnotateToolbar } from "./annotate/MobileAnnotateToolbar";
 
 interface AnnotateTabProps {
   active: boolean;
@@ -15,11 +18,10 @@ interface AnnotateTabProps {
 export function AnnotateTab({ active, selectedImageId, onSelectImage }: AnnotateTabProps) {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const canvasApiRef = useRef<{
-    finishPolygon: () => void;
-    cancelPolygonDraft: () => void;
-    deleteSelected: () => boolean;
-  } | null>(null);
+  const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
+  const canvasApiRef = useRef<CanvasApi | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [polygonDraftLength, setPolygonDraftLength] = useState(0);
 
   const [activeTool, setActiveTool] = useState<ActiveTool>("bbox");
   const [activeClassId, setActiveClassId] = useState(0);
@@ -57,8 +59,20 @@ export function AnnotateTab({ active, selectedImageId, onSelectImage }: Annotate
       setSelectedId(null);
       undoStackRef.current = [];
       setSaveStatus("");
+      setPolygonDraftLength(0);
     }
   }, [imageQuery.data?.id, imageQuery.data]);
+
+  useEffect(() => {
+    if (!active || activeTool !== "polygon") {
+      setPolygonDraftLength(0);
+      return;
+    }
+    const id = window.setInterval(() => {
+      setPolygonDraftLength(canvasApiRef.current?.getPolygonDraftLength() ?? 0);
+    }, 200);
+    return () => window.clearInterval(id);
+  }, [active, activeTool]);
 
   const pushUndo = useCallback(() => {
     undoStackRef.current.push(structuredClone(annotationsRef.current));
@@ -138,19 +152,30 @@ export function AnnotateTab({ active, selectedImageId, onSelectImage }: Annotate
     if (next) onSelectImage(next.id);
   };
 
+  const handleUndo = () => {
+    const prev = undoStackRef.current.pop();
+    if (prev) {
+      setAnnotations(prev);
+      scheduleSave(prev);
+    }
+  };
+
+  const handleDelete = () => {
+    if (polygonDraftLength > 0) {
+      canvasApiRef.current?.cancelPolygonDraft();
+      setPolygonDraftLength(0);
+      return;
+    }
+    canvasApiRef.current?.deleteSelected();
+  };
+
   useEffect(() => {
     if (!active) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "b" || e.key === "B") setActiveTool("bbox");
       if (e.key === "p" || e.key === "P") setActiveTool("polygon");
       if (e.key === "Delete") canvasApiRef.current?.deleteSelected();
-      if (e.ctrlKey && e.key.toLowerCase() === "z") {
-        const prev = undoStackRef.current.pop();
-        if (prev) {
-          setAnnotations(prev);
-          scheduleSave(prev);
-        }
-      }
+      if (e.ctrlKey && e.key.toLowerCase() === "z") handleUndo();
       if (/^[1-9]$/.test(e.key)) {
         const idx = Number(e.key) - 1;
         if (idx < classes.length) setActiveClassId(idx);
@@ -163,178 +188,62 @@ export function AnnotateTab({ active, selectedImageId, onSelectImage }: Annotate
 
   const imageUrl = selectedImageId ? api.imageUrl(selectedImageId, "preview") : null;
 
+  const sidebarProps = {
+    images,
+    selectedImageId,
+    onSelectImage,
+    navigateImage,
+    classes,
+    activeClassId,
+    setActiveClassId,
+    newClassName,
+    setNewClassName,
+    onAddClass: () => {
+      const name = newClassName.trim();
+      if (!name) return;
+      classesMutation.mutate([...classes, name]);
+      setNewClassName("");
+      toast("Class added");
+    },
+    onRemoveClass: () => {
+      if (classes.length <= 1) {
+        toast("At least one class is required", true);
+        return;
+      }
+      const next = classes.filter((_, idx) => idx !== activeClassId);
+      setActiveClassId(0);
+      classesMutation.mutate(next);
+    },
+    activeTool,
+    setActiveTool,
+    canvasApiRef,
+    annotations,
+    selectedId,
+    setSelectedId,
+    onDeleteAnnotation: (id: string) => {
+      pushUndo();
+      const next = annotations.filter((a) => a.id !== id);
+      setAnnotations(next);
+      if (selectedId === id) setSelectedId(null);
+      scheduleSave(next);
+    },
+    reviewed,
+    onReviewedChange: (checked: boolean) => {
+      setReviewed(checked);
+      patchMutation.mutate(checked);
+    },
+    onSave: () => saveMutation.mutate(),
+    onDeleteImage: () => {
+      if (!selectedImageId) return;
+      if (confirm("Delete this image and all annotations?")) deleteMutation.mutate();
+    },
+    saveStatus,
+    saveDisabled: !selectedImageId,
+  };
+
   return (
-    <div className="grid-2">
-      <aside className="stack panel">
-        <h2>Images</h2>
-        <div className="row">
-          <button type="button" onClick={() => navigateImage(-1)}>
-            Prev
-          </button>
-          <button type="button" onClick={() => navigateImage(1)}>
-            Next
-          </button>
-        </div>
-        <div className="image-list">
-          {images.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={`image-item ${item.id === selectedImageId ? "active" : ""}`}
-              onClick={() => onSelectImage(item.id)}
-            >
-              <span>
-                {item.filename.slice(0, 8)}… ({item.annotation_count})
-              </span>
-              <span className={`badge ${item.reviewed ? "reviewed" : ""}`}>
-                {item.reviewed ? "reviewed" : "draft"}
-              </span>
-            </button>
-          ))}
-        </div>
-
-        <h2>Classes</h2>
-        <div className="class-list">
-          {classes.map((name, index) => (
-            <button
-              key={name}
-              type="button"
-              className={`class-item ${index === activeClassId ? "active" : ""}`}
-              onClick={() => setActiveClassId(index)}
-            >
-              <span>
-                <span className="class-dot" style={{ background: classColor(index) }} />
-                {index + 1}. {name}
-              </span>
-            </button>
-          ))}
-        </div>
-        <div className="row">
-          <input
-            placeholder="New class name"
-            value={newClassName}
-            onChange={(e) => setNewClassName(e.target.value)}
-          />
-          <button
-            type="button"
-            onClick={() => {
-              const name = newClassName.trim();
-              if (!name) return;
-              classesMutation.mutate([...classes, name]);
-              setNewClassName("");
-              toast("Class added");
-            }}
-          >
-            Add
-          </button>
-          <button
-            type="button"
-            className="danger"
-            onClick={() => {
-              if (classes.length <= 1) {
-                toast("At least one class is required", true);
-                return;
-              }
-              const next = classes.filter((_, idx) => idx !== activeClassId);
-              setActiveClassId(0);
-              classesMutation.mutate(next);
-            }}
-          >
-            Remove
-          </button>
-        </div>
-
-        <h2>Tools</h2>
-        <div className="row">
-          <button
-            type="button"
-            className={activeTool === "bbox" ? "active-tool" : ""}
-            onClick={() => setActiveTool("bbox")}
-          >
-            Box (B)
-          </button>
-          <button
-            type="button"
-            className={activeTool === "polygon" ? "active-tool" : ""}
-            onClick={() => setActiveTool("polygon")}
-          >
-            Polygon (P)
-          </button>
-        </div>
-        {activeTool === "polygon" && (
-          <div className="row">
-            <button type="button" onClick={() => canvasApiRef.current?.finishPolygon()}>
-              Finish polygon (Enter)
-            </button>
-            <button type="button" onClick={() => canvasApiRef.current?.cancelPolygonDraft()}>
-              Cancel
-            </button>
-          </div>
-        )}
-
-        <h2>Annotations</h2>
-        <div className="annotation-list">
-          {annotations.map((ann, idx) => (
-            <div
-              key={ann.id}
-              className={`annotation-item ${ann.id === selectedId ? "active" : ""}`}
-            >
-              <button type="button" className="link-btn" onClick={() => setSelectedId(ann.id)}>
-                {idx + 1}. {classes[ann.class_id] ?? `class ${ann.class_id}`} ({ann.type})
-              </button>
-              <button
-                type="button"
-                className="danger"
-                onClick={() => {
-                  pushUndo();
-                  const next = annotations.filter((a) => a.id !== ann.id);
-                  setAnnotations(next);
-                  if (selectedId === ann.id) setSelectedId(null);
-                  scheduleSave(next);
-                }}
-              >
-                Delete
-              </button>
-            </div>
-          ))}
-        </div>
-
-        <label>
-          <input
-            type="checkbox"
-            checked={reviewed}
-            onChange={(e) => {
-              setReviewed(e.target.checked);
-              patchMutation.mutate(e.target.checked);
-            }}
-            disabled={!selectedImageId}
-          />{" "}
-          Mark reviewed
-        </label>
-        <div className="row">
-          <button
-            type="button"
-            className="primary"
-            onClick={() => saveMutation.mutate()}
-            disabled={!selectedImageId}
-          >
-            Save
-          </button>
-          <button
-            type="button"
-            className="danger"
-            onClick={() => {
-              if (!selectedImageId) return;
-              if (confirm("Delete this image and all annotations?")) deleteMutation.mutate();
-            }}
-            disabled={!selectedImageId}
-          >
-            Delete image
-          </button>
-        </div>
-        <span className="muted">{saveStatus}</span>
-        <p className="muted">Shortcuts: B box, P polygon, Del delete, Ctrl+Z undo, 1-9 class</p>
-      </aside>
+    <div className={`annotate-layout ${isMobile ? "annotate-layout--mobile" : ""}`}>
+      {!isMobile && <AnnotateSidebar {...sidebarProps} />}
 
       <AnnotationCanvas
         imageUrl={imageUrl}
@@ -347,6 +256,30 @@ export function AnnotateTab({ active, selectedImageId, onSelectImage }: Annotate
         onBeforeChange={pushUndo}
         canvasApiRef={canvasApiRef}
       />
+
+      {isMobile && (
+        <>
+          <MobileAnnotateToolbar
+            activeTool={activeTool}
+            setActiveTool={setActiveTool}
+            classes={classes}
+            activeClassId={activeClassId}
+            onOpenSheet={() => setSheetOpen(true)}
+            onPrev={() => navigateImage(-1)}
+            onNext={() => navigateImage(1)}
+            onUndo={handleUndo}
+            onDelete={handleDelete}
+            hasSelection={Boolean(selectedId)}
+            polygonDraftLength={polygonDraftLength}
+            canvasApiRef={canvasApiRef}
+          />
+          <MobileAnnotateSheet
+            open={sheetOpen}
+            onClose={() => setSheetOpen(false)}
+            {...sidebarProps}
+          />
+        </>
+      )}
     </div>
   );
 }
