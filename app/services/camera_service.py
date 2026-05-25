@@ -355,8 +355,9 @@ class CameraService:
     def get_settings(self) -> dict[str, Any]:
         cfg = self.config_store.config.camera
         controls = self.backend.get_controls() if self.is_available() else {}
+        exposure_us = int(controls.get("ExposureTime") or cfg.exposure_us)
         return {
-            "exposure_us": int(controls.get("ExposureTime") or cfg.exposure_us),
+            "exposure_ms": exposure_us / 1000.0,
             "analogue_gain": float(controls.get("AnalogueGain") or cfg.analogue_gain),
             "mount_height_mm": cfg.mount_height_mm,
             "main_resolution": cfg.main_resolution,
@@ -367,10 +368,14 @@ class CameraService:
 
     def update_settings(
         self,
-        exposure_us: int | None = None,
+        exposure_ms: float | None = None,
         analogue_gain: float | None = None,
         mount_height_mm: float | None = None,
     ) -> dict[str, Any]:
+        exposure_us: int | None = None
+        if exposure_ms is not None:
+            exposure_us = int(round(exposure_ms * 1000))
+
         patch: dict[str, Any] = {"camera": {}}
         if exposure_us is not None:
             patch["camera"]["exposure_us"] = exposure_us

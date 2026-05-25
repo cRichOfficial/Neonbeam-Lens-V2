@@ -32,7 +32,7 @@ export function CaptureTab({ active, onCaptured }: CaptureTabProps) {
 
   useEffect(() => {
     if (settingsQuery.data) {
-      setExposure(settingsQuery.data.exposure_us);
+      setExposure(settingsQuery.data.exposure_ms);
       setGain(settingsQuery.data.analogue_gain);
     }
   }, [settingsQuery.data]);
@@ -76,11 +76,11 @@ export function CaptureTab({ active, onCaptured }: CaptureTabProps) {
           <summary>Camera settings</summary>
           <div className="stack">
             <label>
-              Exposure (µs){" "}
+              Exposure (ms){" "}
               <input
                 type="number"
-                min={100}
-                step={100}
+                min={0.1}
+                step={0.1}
                 value={exposure}
                 onChange={(e) => setExposure(Number(e.target.value))}
               />
@@ -98,7 +98,7 @@ export function CaptureTab({ active, onCaptured }: CaptureTabProps) {
             <button
               onClick={() =>
                 settingsMutation.mutate({
-                  exposure_us: typeof exposure === "number" ? exposure : undefined,
+                  exposure_ms: typeof exposure === "number" ? exposure : undefined,
                   analogue_gain: typeof gain === "number" ? gain : undefined,
                 })
               }

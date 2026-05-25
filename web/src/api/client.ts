@@ -69,7 +69,7 @@ export const api = {
       `/api/v1/dataset/stats?reviewed_only=${reviewedOnly ? "true" : "false"}`,
     ),
   getCameraSettings: () => request<CameraSettings>("/api/v1/camera/settings"),
-  setCameraSettings: (payload: { exposure_us?: number; analogue_gain?: number }) =>
+  setCameraSettings: (payload: { exposure_ms?: number; analogue_gain?: number }) =>
     request<CameraSettings>("/api/v1/camera/settings", {
       method: "PUT",
       body: JSON.stringify(payload),

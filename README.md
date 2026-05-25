@@ -129,8 +129,8 @@ sudo systemctl enable --now laser-detection
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Service health |
-| GET | `/api/v1/camera/settings` | Camera settings |
-| PUT | `/api/v1/camera/settings` | Update exposure/gain/mount height |
+| GET | `/api/v1/camera/settings` | Camera settings (`exposure_ms`, gain, mount height) |
+| PUT | `/api/v1/camera/settings` | Update camera settings (`exposure_ms` in milliseconds; converted to µs internally) |
 | GET | `/api/v1/camera/snapshot` | JPEG still |
 | GET | `/api/v1/camera/stream` | MJPEG stream |
 | POST | `/api/v1/calibration/apriltag` | Calibrate from AprilTag specs |

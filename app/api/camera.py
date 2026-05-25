@@ -24,7 +24,7 @@ def update_camera_settings(
     camera: CameraService = Depends(get_camera_service),
 ) -> CameraSettingsResponse:
     settings = camera.update_settings(
-        exposure_us=payload.exposure_us,
+        exposure_ms=payload.exposure_ms,
         analogue_gain=payload.analogue_gain,
         mount_height_mm=payload.mount_height_mm,
     )

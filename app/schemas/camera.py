@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 
 class CameraSettingsResponse(BaseModel):
-    exposure_us: int
+    exposure_ms: float
     analogue_gain: float
     mount_height_mm: float
     main_resolution: list[int]
@@ -14,6 +14,6 @@ class CameraSettingsResponse(BaseModel):
 
 
 class CameraSettingsUpdate(BaseModel):
-    exposure_us: int | None = Field(default=None, gt=0)
+    exposure_ms: float | None = Field(default=None, gt=0)
     analogue_gain: float | None = Field(default=None, gt=0)
     mount_height_mm: float | None = Field(default=None, gt=0)

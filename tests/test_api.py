@@ -32,8 +32,19 @@ def test_camera_settings(client: TestClient) -> None:
     response = client.get("/api/v1/camera/settings")
     assert response.status_code == 200
     data = response.json()
-    assert "exposure_us" in data
+    assert "exposure_ms" in data
+    assert data["exposure_ms"] == 10.0
     assert "mount_height_mm" in data
+
+
+def test_camera_settings_update_exposure_ms(client: TestClient) -> None:
+    response = client.put("/api/v1/camera/settings", json={"exposure_ms": 20})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["exposure_ms"] == 20.0
+
+    get_response = client.get("/api/v1/camera/settings")
+    assert get_response.json()["exposure_ms"] == 20.0
 
 
 def test_camera_snapshot(client: TestClient) -> None:
