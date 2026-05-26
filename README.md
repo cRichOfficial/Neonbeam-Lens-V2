@@ -145,8 +145,6 @@ sudo systemctl enable --now laser-detection
 | GET | `/health` | Service health |
 | GET | `/api/v1/camera/settings` | Camera settings (`exposure_ms`, gain, mount height) |
 | PUT | `/api/v1/camera/settings` | Update camera settings (`exposure_ms` in milliseconds; converted to µs internally) |
-
-`exposure_ms` is the configured/saved value. `exposure_ms_actual` (when present) is what the camera hardware applied — they should match after the frame-duration fix below. Long exposures (> ~66 ms) automatically lower the capture frame rate so libcamera is not capped by a fixed 15 fps window.
 | GET | `/api/v1/camera/snapshot` | JPEG still |
 | GET | `/api/v1/camera/stream` | MJPEG stream (`?size=main` 16:9 preview default; `?size=lores` square 640×640 for ML) |
 | POST | `/api/v1/calibration/apriltag` | Calibrate from AprilTag specs |
@@ -173,6 +171,8 @@ sudo systemctl enable --now laser-detection
 | DELETE | `/api/v1/dataset/images/{id}` | Delete image |
 | POST | `/api/v1/dataset/export` | Export detection + segmentation datasets |
 | GET | `/api/v1/dataset/export/status` | Last export summary |
+
+`exposure_ms` is the configured/saved value. `exposure_ms_actual` (when present) is what the camera hardware applied — they should match after the frame-duration fix below. Long exposures (> ~66 ms) automatically lower the capture frame rate so libcamera is not capped by a fixed 15 fps window.
 
 ## Annotation Web UI
 
