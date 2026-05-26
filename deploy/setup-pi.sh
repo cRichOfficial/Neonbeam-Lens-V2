@@ -55,6 +55,34 @@ configure_hailort_for_direct_access() {
   echo ""
 }
 
+install_cpu_torch() {
+  echo ""
+  echo "=== Installing CPU-only PyTorch (skip NVIDIA CUDA wheels on aarch64) ==="
+  # piwheels builds torch for Raspberry Pi OS without nvidia-* CUDA packages.
+  if pip install torch torchvision \
+      --prefer-binary \
+      --extra-index-url https://www.piwheels.org/simple; then
+    echo "PyTorch installed from piwheels."
+  else
+    echo "piwheels unavailable for this Python version; trying PyTorch CPU index..."
+    pip install torch torchvision \
+      --index-url https://download.pytorch.org/whl/cpu \
+      --extra-index-url https://pypi.org/simple
+  fi
+
+  if pip list --format=freeze | grep -qi '^nvidia-'; then
+    echo "WARNING: NVIDIA CUDA packages detected after torch install." >&2
+    echo "         Ultralytics CPU fallback will still work, but ~1GB of unused CUDA libs were installed." >&2
+    echo "         Try: pip uninstall -y \$(pip list --format=freeze | grep -i '^nvidia-' | cut -d= -f1)" >&2
+  else
+    echo "No nvidia-* CUDA packages detected."
+  fi
+
+  python -c "import torch; print(f'torch {torch.__version__} (cuda build: {torch.version.cuda})')"
+  echo "=== CPU PyTorch install done ==="
+  echo ""
+}
+
 echo "Installing system packages (picamera2, libcamera, Hailo)..."
 sudo apt update
 sudo apt install -y hailo-all python3-picamera2 python3-venv python3-dev
@@ -74,6 +102,7 @@ fi
 echo "Installing Python dependencies..."
 source .venv/bin/activate
 pip install --upgrade pip
+install_cpu_torch
 pip install -r requirements-pi.txt
 
 echo "Verifying picamera2 import..."
@@ -106,6 +135,29 @@ else
     exit 1
   fi
   echo "Saved $FASTSAM_HEF"
+fi
+
+FASTSAM_PT="models/FastSAM-s.pt"
+FASTSAM_PT_URL="https://github.com/ultralytics/assets/releases/download/v8.3.0/FastSAM-s.pt"
+
+if [ -f "$FASTSAM_PT" ]; then
+  echo "CPU FastSAM model already present at $FASTSAM_PT"
+else
+  echo "Downloading FastSAM-s.pt for CPU fallback..."
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL -o "$FASTSAM_PT" "$FASTSAM_PT_URL"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O "$FASTSAM_PT" "$FASTSAM_PT_URL"
+  else
+    echo "ERROR: curl or wget required to download $FASTSAM_PT" >&2
+    exit 1
+  fi
+  if [ ! -s "$FASTSAM_PT" ]; then
+    rm -f "$FASTSAM_PT"
+    echo "ERROR: FastSAM-s.pt download failed or produced an empty file" >&2
+    exit 1
+  fi
+  echo "Saved $FASTSAM_PT"
 fi
 
 configure_hailort_for_direct_access

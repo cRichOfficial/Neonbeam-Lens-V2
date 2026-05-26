@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 from app.schemas.common import Point2D
-from app.schemas.shapes import WorkAreaImageInfo
+from app.schemas.detection import WorkAreaImageInfo
 from app.services.calibration_service import CalibrationService, get_calibration_service
 from app.services.transform_service import TransformService, get_transform_service
 

@@ -1,100 +1,95 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import cv2
 import numpy as np
 
 from app.config import get_config_store
-from app.services.hailo_npu import get_hailo_npu
+from app.services.fastsam_cpu_backend import CpuFastSamBackend
+from app.services.fastsam_hailo_backend import (
+    FASTSAM_MODEL_KEY,
+    HailoFastSamBackend,
+    resolve_fastsam_hef_path,
+)
 
 logger = logging.getLogger(__name__)
 
-FASTSAM_MODEL_KEY = "fastsam"
-
-
-def resolve_fastsam_path() -> Path | None:
-    config = get_config_store().config.shapes
-    candidates = [
-        config.resolved_fastsam_model_path,
-        Path(config.fastsam_fallback_model),
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return None
+# Re-export for main.py startup compatibility
+resolve_fastsam_path = resolve_fastsam_hef_path
 
 
 class FastSamDetector:
     name = "fastsam"
 
     def __init__(self) -> None:
-        self._npu = get_hailo_npu()
+        self._hailo = HailoFastSamBackend()
+        self._cpu = CpuFastSamBackend()
+        self._active_device: str | None = None
+        self.last_segment_detail: str = ""
+
+    def _resolve_device(self) -> str:
+        return get_config_store().config.detection.fastsam_device
+
+    def _select_backend(self):
+        device = self._resolve_device()
+        if device == "hailo":
+            return self._hailo if self._hailo.is_loaded() or self._hailo.try_load() else None
+        if device == "cpu":
+            return self._cpu if self._cpu.is_loaded() or self._cpu.try_load() else None
+        if self._hailo.is_loaded() or self._hailo.try_load():
+            return self._hailo
+        if self._cpu.is_loaded() or self._cpu.try_load():
+            return self._cpu
+        return None
 
     def is_loaded(self) -> bool:
-        return self._npu.is_loaded(FASTSAM_MODEL_KEY)
+        return self._select_backend() is not None
 
     def get_status(self) -> dict[str, str | bool | None]:
-        return self._npu.get_model_status(FASTSAM_MODEL_KEY)
+        backend = self._select_backend()
+        hailo_status = self._hailo.get_status()
+        cpu_status = self._cpu.get_status()
+        device = backend.name if backend is not None else "none"
+        loaded = backend is not None
+        last_error = None
+        if device == "none":
+            last_error = cpu_status.get("last_error") or hailo_status.get("last_error")
+        return {
+            "device": device,
+            "loaded": loaded,
+            "last_error": last_error,
+            "configured_device": self._resolve_device(),
+            "hailo": hailo_status,
+            "cpu": cpu_status,
+        }
 
     def try_load(self, *, force: bool = False) -> bool:
-        return self._npu.load_model(FASTSAM_MODEL_KEY, resolve_fastsam_path(), force=force)
+        device = self._resolve_device()
+        if device == "hailo":
+            return self._hailo.try_load(force=force)
+        if device == "cpu":
+            return self._cpu.try_load(force=force)
+        if self._hailo.try_load(force=force):
+            return True
+        return self._cpu.try_load(force=force)
 
     def close(self) -> None:
         pass
 
     def segment_masks(self, frame: np.ndarray) -> list[np.ndarray]:
-        if not self.try_load():
+        backend = self._select_backend()
+        if backend is None:
+            self.last_segment_detail = "no backend available"
             return []
-
-        input_size = self._npu.get_input_size(FASTSAM_MODEL_KEY)
-        if input_size is None:
-            return []
-
-        resized = cv2.resize(frame, input_size)
-        if resized.ndim == 2:
-            inference_frame = cv2.cvtColor(resized, cv2.COLOR_GRAY2RGB)
-        elif resized.shape[2] == 3:
-            inference_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-        else:
-            inference_frame = resized
-
-        results = self._npu.run(FASTSAM_MODEL_KEY, inference_frame)
-        return self._parse_masks(results, frame.shape[1], frame.shape[0])
-
-    def _parse_masks(self, results, frame_w: int, frame_h: int) -> list[np.ndarray]:
-        masks: list[np.ndarray] = []
-        if results is None:
-            return masks
-
-        def _add_mask(raw_mask: np.ndarray) -> None:
-            if raw_mask.ndim > 2:
-                raw_mask = raw_mask.squeeze()
-            if raw_mask.dtype != np.uint8:
-                raw_mask = (raw_mask > 0.5).astype(np.uint8) * 255
-            if raw_mask.shape[:2] != (frame_h, frame_w):
-                raw_mask = cv2.resize(raw_mask, (frame_w, frame_h), interpolation=cv2.INTER_NEAREST)
-            if np.count_nonzero(raw_mask) > 0:
-                masks.append(raw_mask)
-
-        if isinstance(results, dict):
-            if "masks" in results:
-                for item in results["masks"]:
-                    _add_mask(np.asarray(item))
-            elif "mask" in results:
-                _add_mask(np.asarray(results["mask"]))
-        elif isinstance(results, (list, tuple)):
-            for item in results:
-                if isinstance(item, np.ndarray) and item.ndim >= 2:
-                    _add_mask(item)
-                elif isinstance(item, dict) and "mask" in item:
-                    _add_mask(np.asarray(item["mask"]))
-        elif isinstance(results, np.ndarray) and results.ndim >= 3:
-            for index in range(results.shape[0]):
-                _add_mask(results[index])
-
+        self._active_device = backend.name
+        masks = backend.segment_masks(frame)
+        self.last_segment_detail = getattr(backend, "last_segment_detail", "") or ""
         return masks
+
+    @property
+    def active_device(self) -> str | None:
+        return self._active_device
 
     def combined_mask(self, frame: np.ndarray) -> np.ndarray:
         masks = self.segment_masks(frame)

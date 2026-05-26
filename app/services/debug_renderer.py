@@ -4,13 +4,11 @@ import cv2
 import numpy as np
 
 from app.config import BedConfig, get_config_store
-from app.services.bed_frame import bed_boundary_corners_mm
-from app.schemas.detection import DetectionItem
-from app.services.apriltag_service import get_apriltag_service
-from app.services.calibration_service import get_calibration_service
-from app.services.cpu_detector import RawDetection
-from app.services.transform_service import get_transform_service
 from app.schemas.calibration import AprilTagSpec
+from app.services.apriltag_service import get_apriltag_service
+from app.services.bed_frame import bed_boundary_corners_mm
+from app.services.calibration_service import get_calibration_service
+from app.services.transform_service import get_transform_service
 from app.services.work_area import measure_tag_edge_lengths_mm
 
 
@@ -18,7 +16,6 @@ class DebugRenderer:
     def render(
         self,
         frame: np.ndarray,
-        detections: list[DetectionItem] | None = None,
         draw_tags: bool = True,
         draw_grid: bool = True,
         draw_side_lengths: bool = False,
@@ -75,33 +72,6 @@ class DebugRenderer:
                     2,
                     cv2.LINE_AA,
                 )
-
-        if detections:
-            for det in detections:
-                bbox = det.bbox_px
-                cv2.rectangle(
-                    output,
-                    (int(bbox.x_min), int(bbox.y_min)),
-                    (int(bbox.x_max), int(bbox.y_max)),
-                    (0, 255, 0),
-                    2,
-                )
-                label = det.class_name
-                if det.center_mm is not None:
-                    label += f" ({det.center_mm.x:.1f}, {det.center_mm.y:.1f}) mm"
-                cv2.putText(
-                    output,
-                    label,
-                    (int(bbox.x_min), max(20, int(bbox.y_min) - 8)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.55,
-                    (0, 255, 0),
-                    2,
-                    cv2.LINE_AA,
-                )
-                if det.segmentation_polygon_px:
-                    pts = np.array([[p.x, p.y] for p in det.segmentation_polygon_px], dtype=np.int32)
-                    cv2.polylines(output, [pts], True, (255, 128, 0), 2)
 
         ok, encoded = cv2.imencode(".jpg", cv2.cvtColor(output, cv2.COLOR_RGB2BGR), [int(cv2.IMWRITE_JPEG_QUALITY), 90])
         if not ok:
@@ -238,42 +208,6 @@ class DebugRenderer:
             cv2.line(frame, tuple(pts_px[0]), tuple(pts_px[1]), (80, 80, 160), 1)
 
         return frame
-
-
-def raw_to_detection_items(
-    raw_detections: list[RawDetection],
-    object_height_mm: float,
-) -> list[DetectionItem]:
-    transform = get_transform_service()
-    calibrated = transform.is_ready()
-    items: list[DetectionItem] = []
-
-    for raw in raw_detections:
-        bbox_mm = None
-        center_mm = None
-        polygon_mm = None
-        if calibrated:
-            bbox_mm = transform.bbox_px_to_mm(raw.bbox_px, object_height_mm=object_height_mm)
-            center = raw.bbox_px.center
-            center_mm = transform.point_px_to_mm(center, object_height_mm=object_height_mm)
-            if raw.segmentation_polygon_px:
-                polygon_mm = transform.polygon_px_to_mm(
-                    raw.segmentation_polygon_px, object_height_mm=object_height_mm
-                )
-
-        items.append(
-            DetectionItem(
-                class_id=raw.class_id,
-                class_name=raw.class_name,
-                confidence=raw.confidence,
-                bbox_px=raw.bbox_px,
-                bbox_mm=bbox_mm,
-                center_mm=center_mm,
-                segmentation_polygon_px=raw.segmentation_polygon_px,
-                segmentation_polygon_mm=polygon_mm,
-            )
-        )
-    return items
 
 
 _debug_renderer: DebugRenderer | None = None

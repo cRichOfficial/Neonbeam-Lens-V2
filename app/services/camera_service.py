@@ -14,6 +14,27 @@ from app.config import ConfigStore, get_config_store
 
 logger = logging.getLogger(__name__)
 
+# libcamera caps exposure at the frame period; extend frame duration for long exposures.
+_FRAME_READOUT_MARGIN_US = 10_000
+_MIN_FRAME_DURATION_US = 20_000
+_MAX_FRAME_DURATION_US = 10_000_000
+
+
+def controls_for_manual_exposure(exposure_us: int, analogue_gain: float) -> dict[str, Any]:
+    """Build picamera2 controls that allow the requested exposure time."""
+    frame_duration = min(
+        max(exposure_us + _FRAME_READOUT_MARGIN_US, _MIN_FRAME_DURATION_US),
+        _MAX_FRAME_DURATION_US,
+    )
+    frame_rate = 1_000_000 / frame_duration
+    return {
+        "AeEnable": False,
+        "ExposureTime": exposure_us,
+        "AnalogueGain": analogue_gain,
+        "FrameDurationLimits": (frame_duration, frame_duration),
+        "FrameRate": frame_rate,
+    }
+
 
 class StreamingOutput(io.BufferedIOBase):
     def __init__(self) -> None:
@@ -176,11 +197,8 @@ class Picamera2Backend(CameraBackend):
             config = picam2.create_video_configuration(
                 main={"size": main_size, "format": "RGB888"},
                 lores={"size": lores_size, "format": "RGB888"},
-                controls={
-                    "FrameRate": 15,
-                    "ExposureTime": cfg.exposure_us,
-                    "AnalogueGain": cfg.analogue_gain,
-                },
+                buffer_count=2,
+                controls=controls_for_manual_exposure(cfg.exposure_us, cfg.analogue_gain),
             )
             picam2.configure(config)
             output = StreamingOutput()
@@ -258,14 +276,17 @@ class Picamera2Backend(CameraBackend):
     def set_controls(self, exposure_us: int | None, analogue_gain: float | None) -> None:
         if self._picam2 is None:
             return
-        controls: dict[str, Any] = {}
-        if exposure_us is not None:
-            controls["ExposureTime"] = exposure_us
-        if analogue_gain is not None:
-            controls["AnalogueGain"] = analogue_gain
-        if controls:
-            with self._io_lock:
-                self._picam2.set_controls(controls)
+        cfg = self.config_store.config.camera
+        current = self.get_controls()
+        resolved_exposure = exposure_us
+        if resolved_exposure is None:
+            resolved_exposure = int(current.get("ExposureTime") or cfg.exposure_us)
+        resolved_gain = analogue_gain
+        if resolved_gain is None:
+            resolved_gain = float(current.get("AnalogueGain") or cfg.analogue_gain)
+        controls = controls_for_manual_exposure(resolved_exposure, resolved_gain)
+        with self._io_lock:
+            self._picam2.set_controls(controls)
 
     def get_controls(self) -> dict[str, Any]:
         if self._picam2 is None:
@@ -355,10 +376,21 @@ class CameraService:
     def get_settings(self) -> dict[str, Any]:
         cfg = self.config_store.config.camera
         controls = self.backend.get_controls() if self.is_available() else {}
-        exposure_us = int(controls.get("ExposureTime") or cfg.exposure_us)
+        exposure_us_configured = cfg.exposure_us
+        exposure_us_actual = controls.get("ExposureTime")
+        if exposure_us_actual is not None:
+            exposure_us_actual = int(exposure_us_actual)
+        gain_configured = cfg.analogue_gain
+        gain_actual = controls.get("AnalogueGain")
+        if gain_actual is not None:
+            gain_actual = float(gain_actual)
         return {
-            "exposure_ms": exposure_us / 1000.0,
-            "analogue_gain": float(controls.get("AnalogueGain") or cfg.analogue_gain),
+            "exposure_ms": exposure_us_configured / 1000.0,
+            "exposure_ms_actual": (
+                exposure_us_actual / 1000.0 if exposure_us_actual is not None else None
+            ),
+            "analogue_gain": gain_configured,
+            "analogue_gain_actual": gain_actual,
             "mount_height_mm": cfg.mount_height_mm,
             "main_resolution": cfg.main_resolution,
             "lores_resolution": cfg.lores_resolution,

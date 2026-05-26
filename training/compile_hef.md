@@ -58,7 +58,7 @@ Update `config/default.yaml` if the model filename differs.
 
 ## Notes
 
-- YOLOv8 HEF models require host-side NMS post-processing (handled in `app/services/hailo_detector.py`).
+- YOLOv8 HEF models require host-side NMS post-processing if you compile custom detection HEFs for offline experiments (runtime API uses FastSAM only).
 - For initial integration testing, the Pi ships with `/usr/share/hailo-models/yolov8s_h8l.hef` after `sudo apt install hailo-all`.
 - Instance segmentation models (`yolov8n_seg`, etc.) need additional mask decoding on the CPU.
 

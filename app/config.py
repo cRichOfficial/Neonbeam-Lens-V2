@@ -58,35 +58,13 @@ class ApriltagConfig(BaseModel):
 
 
 class DetectionConfig(BaseModel):
-    model_path: str = "~/object-detection-v2/models/detection.hef"
-    cpu_model_path: str = "~/object-detection-v2/models/best.pt"
-    segmentation_model_path: str = "~/object-detection-v2/models/segmentation.hef"
-    hailo_fallback_model: str = "/usr/share/hailo-models/yolov8s_h8l.hef"
-    confidence_threshold: float = 0.5
-    nms_iou_threshold: float = 0.45
-    backend: Literal["auto", "hailo", "cpu"] = "auto"
-
-    @property
-    def resolved_model_path(self) -> Path:
-        return expand_path(self.model_path)
-
-    @property
-    def resolved_cpu_model_path(self) -> Path:
-        return expand_path(self.cpu_model_path)
-
-    @property
-    def resolved_segmentation_model_path(self) -> Path:
-        return expand_path(self.segmentation_model_path)
-
-
-class ShapesConfig(BaseModel):
-    backend: Literal["auto", "classical", "fastsam"] = "auto"
     fastsam_model_path: str = "~/object-detection-v2/models/fast_sam_s.hef"
     fastsam_fallback_model: str = "/usr/share/hailo-models/fast_sam_s.hef"
     min_confidence: float = 0.35
-    classical_fallback_confidence: float = 0.4
     min_area_mm2: float = 400.0
     max_area_mm2: float = 80000.0
+    split_above_area_mm2: float = 20000.0
+    max_object_span_ratio: float = 0.45
     min_solidity: float = 0.75
     min_extent: float = 0.35
     circularity_threshold: float = 0.82
@@ -94,10 +72,44 @@ class ShapesConfig(BaseModel):
     bracelet_min_aspect: float = 6.0
     roi_margin_mm: float = 5.0
     max_edge_px: int = 1024
+    mask_morph_kernel_px: int = 15
+    mask_min_component_area_mm2: float = 100.0
+    mask_max_components: int = 80
+    morph_close_iterations: int = 3
+    mask_max_component_area_ratio: float = 0.28
+    mask_bridge_break_kernel_px: int = 9
+    glare_suppression_enabled: bool = True
+    glare_suppression_l_cap: float = 220.0
+    glare_rejection_enabled: bool = True
+    glare_l_delta: float = 40.0
+    glare_l_absolute_min: float = 200.0
+    fastsam_device: Literal["auto", "hailo", "cpu"] = "hailo"
+    fastsam_cpu_model_path: str = "~/object-detection-v2/models/FastSAM-s.pt"
+    fastsam_cpu_imgsz: int = 640
+    fastsam_cpu_confidence: float = 0.4
+    fastsam_hailo_score_threshold: float = 0.15
+    fastsam_hailo_nms_iou: float = 0.45
+    fastsam_hailo_mask_threshold: float = 0.5
+    fastsam_bg_filter_enabled: bool = True
+    fastsam_bg_filter_min_overlap: float = 0.25
+    fastsam_bg_filter_max_fg_ratio: float = 0.45
+    fastsam_min_mask_area_px: int = 800
+    use_background_reference: bool = True
+    background_storage_path: str = "config/work_area_background.png"
+    bg_subtract_min_diff: int = 15
+    bg_subtract_blur_kernel_px: int = 5
 
     @property
     def resolved_fastsam_model_path(self) -> Path:
         return expand_path(self.fastsam_model_path)
+
+    @property
+    def resolved_fastsam_cpu_model_path(self) -> Path:
+        return expand_path(self.fastsam_cpu_model_path)
+
+    @property
+    def resolved_background_storage_path(self) -> Path:
+        return expand_path(self.background_storage_path)
 
 
 class ParallaxConfig(BaseModel):
@@ -137,7 +149,6 @@ class AppConfig(BaseModel):
     camera: CameraConfig = Field(default_factory=CameraConfig)
     apriltag: ApriltagConfig = Field(default_factory=ApriltagConfig)
     detection: DetectionConfig = Field(default_factory=DetectionConfig)
-    shapes: ShapesConfig = Field(default_factory=ShapesConfig)
     parallax: ParallaxConfig = Field(default_factory=ParallaxConfig)
     calibration: CalibrationConfig = Field(default_factory=CalibrationConfig)
     dataset: DatasetConfig = Field(default_factory=DatasetConfig)

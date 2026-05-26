@@ -13,6 +13,7 @@ from app.schemas.calibration import (
     CalibrationStatusResponse,
     DistortionSummary,
     TagSizeValidation,
+    WorkAreaBackgroundSummary,
     WorkAreaSummary,
 )
 from app.services.apriltag_pdf_service import generate_apriltag_pdf
@@ -22,6 +23,8 @@ from app.services.camera_intrinsics import resolve_camera_intrinsics, undistort_
 from app.services.camera_service import CameraService, get_camera_service
 from app.services.debug_renderer import get_debug_renderer
 from app.services.work_area import derive_work_area_from_detections
+from app.services.work_area_background import get_work_area_background_store
+from app.services.work_area_renderer import get_work_area_renderer
 
 router = APIRouter(prefix="/api/v1/calibration", tags=["calibration"])
 
@@ -95,6 +98,15 @@ def calibration_status(
                 scale_y_iterations=int(tag_size_validation.get("scale_y_iterations", 0)),
             ),
         }
+    bg_status = get_work_area_background_store().get_status()
+    status = {
+        **status,
+        "background_reference": WorkAreaBackgroundSummary(
+            present=bg_status.present,
+            timestamp=bg_status.timestamp,
+            stale_reason=bg_status.stale_reason,
+        ),
+    }
     return CalibrationStatusResponse(**status)
 
 
@@ -161,6 +173,14 @@ def calibrate_apriltags(
     message = "Calibration saved"
     if tag_size_validation is not None and tag_size_validation.warning:
         message = tag_size_validation.warning
+
+    background_captured = False
+    if payload.capture_empty_background:
+        shapes_cfg = get_config_store().config.detection
+        view = get_work_area_renderer().render(frame, max_edge_px=shapes_cfg.max_edge_px)
+        get_work_area_background_store().save(view, max_edge_px=shapes_cfg.max_edge_px)
+        background_captured = True
+
     return CalibrationResult(
         success=True,
         timestamp=result.timestamp,
@@ -170,6 +190,7 @@ def calibrate_apriltags(
         distortion=distortion,
         work_area=_work_area_summary(result),
         tag_size_validation=tag_size_validation,
+        background_captured=background_captured,
     )
 
 

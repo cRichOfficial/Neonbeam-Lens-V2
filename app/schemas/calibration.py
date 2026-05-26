@@ -31,6 +31,10 @@ class AprilTagCalibrationRequest(BaseModel):
         min_length=4,
         description="AprilTag IDs placed at the four corners of the work area",
     )
+    capture_empty_background: bool = Field(
+        default=False,
+        description="After calibration, save an empty-bed background reference from the same frame",
+    )
 
 
 class DetectedAprilTag(BaseModel):
@@ -73,6 +77,12 @@ class TagSizeValidation(BaseModel):
     scale_y_iterations: int = 0
 
 
+class WorkAreaBackgroundSummary(BaseModel):
+    present: bool
+    timestamp: str | None = None
+    stale_reason: str | None = None
+
+
 class CalibrationStatusResponse(BaseModel):
     calibrated: bool
     bed_frame: str = ""
@@ -84,6 +94,7 @@ class CalibrationStatusResponse(BaseModel):
     distortion: DistortionSummary | None = None
     work_area: WorkAreaSummary | None = None
     tag_size_validation: TagSizeValidation | None = None
+    background_reference: WorkAreaBackgroundSummary | None = None
 
 
 class CalibrationResult(BaseModel):
@@ -95,6 +106,7 @@ class CalibrationResult(BaseModel):
     distortion: DistortionSummary | None = None
     work_area: WorkAreaSummary | None = None
     tag_size_validation: TagSizeValidation | None = None
+    background_captured: bool = False
 
 
 class AprilTagPdfRequest(BaseModel):

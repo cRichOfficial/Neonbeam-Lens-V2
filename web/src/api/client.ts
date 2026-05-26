@@ -74,6 +74,6 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
-  cameraStreamUrl: () => `/api/v1/camera/stream?size=lores&ts=${Date.now()}`,
+  cameraStreamUrl: () => `/api/v1/camera/stream?size=main&ts=${Date.now()}`,
   health: () => request<{ camera?: { mode?: string } }>("/health"),
 };

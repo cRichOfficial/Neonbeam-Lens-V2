@@ -3,7 +3,7 @@ bed:
   y_axis: up
 camera:
   mount_height_mm: 360.0
-  exposure_us: 20000
+  exposure_us: 750000
   analogue_gain: 1.0
   main_resolution:
   - 1920
@@ -28,21 +28,13 @@ apriltag:
   pdf_page_margin_mm: 10.0
   quad_decimate: 1.0
 detection:
-  model_path: ~/object-detection-v2/models/detection.hef
-  cpu_model_path: ~/object-detection-v2/models/best.pt
-  segmentation_model_path: ~/object-detection-v2/models/segmentation.hef
-  hailo_fallback_model: /usr/share/hailo-models/yolov8s_h8l.hef
-  confidence_threshold: 0.5
-  nms_iou_threshold: 0.45
-  backend: auto
-shapes:
-  backend: auto
   fastsam_model_path: ~/object-detection-v2/models/fast_sam_s.hef
   fastsam_fallback_model: /usr/share/hailo-models/fast_sam_s.hef
   min_confidence: 0.35
-  classical_fallback_confidence: 0.4
   min_area_mm2: 400.0
   max_area_mm2: 80000.0
+  split_above_area_mm2: 20000.0
+  max_object_span_ratio: 0.45
   min_solidity: 0.75
   min_extent: 0.35
   circularity_threshold: 0.82
@@ -50,6 +42,32 @@ shapes:
   bracelet_min_aspect: 6.0
   roi_margin_mm: 5.0
   max_edge_px: 1024
+  mask_morph_kernel_px: 15
+  mask_min_component_area_mm2: 100.0
+  mask_max_components: 80
+  morph_close_iterations: 3
+  mask_max_component_area_ratio: 0.28
+  mask_bridge_break_kernel_px: 9
+  glare_suppression_enabled: true
+  glare_suppression_l_cap: 220.0
+  glare_rejection_enabled: true
+  glare_l_delta: 40.0
+  glare_l_absolute_min: 200.0
+  fastsam_device: hailo
+  fastsam_cpu_model_path: ~/object-detection-v2/models/FastSAM-s.pt
+  fastsam_cpu_imgsz: 640
+  fastsam_cpu_confidence: 0.4
+  fastsam_hailo_score_threshold: 0.15
+  fastsam_hailo_nms_iou: 0.45
+  fastsam_hailo_mask_threshold: 0.5
+  fastsam_bg_filter_enabled: true
+  fastsam_bg_filter_min_overlap: 0.25
+  fastsam_bg_filter_max_fg_ratio: 0.45
+  fastsam_min_mask_area_px: 800
+  use_background_reference: true
+  background_storage_path: config/work_area_background.png
+  bg_subtract_min_diff: 15
+  bg_subtract_blur_kernel_px: 5
 parallax:
   default_object_height_mm: 0.0
 calibration:

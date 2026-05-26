@@ -9,9 +9,8 @@ FastAPI service for a Raspberry Pi 5 laser engraver with CSI camera and Hailo-8L
 - Camera settings (exposure, gain, mount height), snapshot, and MJPEG stream
 - AprilTag homography calibration with mm coordinate mapping
 - AprilTag PDF generator (IDs 0–3, to-scale on US Letter)
-- YOLOv8 object detection with Hailo NPU (production) and Ultralytics CPU fallback (dev)
-- Parallax compensation for object height above the bed
-- Debug image overlay (tags, grid, detections)
+- FastSAM instance segmentation with Hailo NPU (production) and Ultralytics CPU fallback (dev)
+- Bed-calibrated shape detection (mm geometry, rotation, segmentation polygons)
 - Custom model training pipeline scaffold
 
 ## Quick Start (neonbeam-lens.richwerks.local)
@@ -28,9 +27,13 @@ sudo apt install hailo-all python3-picamera2 python3-venv
 cd ~/object-detection-v2
 python3 -m venv .venv --system-site-packages   # required — picamera2 is a system package
 source .venv/bin/activate
+pip install --upgrade pip
+pip install torch torchvision --prefer-binary --extra-index-url https://www.piwheels.org/simple
 pip install -r requirements-pi.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
+
+> **Note:** `ultralytics` depends on PyTorch. On Pi (`aarch64`), a plain `pip install ultralytics` can pull **NVIDIA CUDA** wheels (~1GB, useless without an NVIDIA GPU). `setup-pi.sh` installs **CPU-only** torch from [piwheels](https://www.piwheels.org/) first.
 
 > **Note:** `picamera2` and Hailo bindings are installed via `apt`, not `pip`. The venv **must** be created with `--system-site-packages` so those modules are visible. Without it, the service falls back to a mock camera.
 
@@ -62,7 +65,7 @@ hailortcli fw-control identify
 ls -l /dev/hailo*
 ```
 
-If the HAT is not installed, FastSAM cannot load — shapes still work via **classical CV only**. Install the HAT on the Pi 5 PCIe connector, reboot, and re-run `hailortcli fw-control identify`.
+If the HAT is not installed, Hailo FastSAM cannot load — set `detection.fastsam_device: cpu` for Ultralytics **FastSAM-s.pt** on the CPU. Install the HAT on the Pi 5 PCIe connector, reboot, and re-run `hailortcli fw-control identify`.
 
 `/health` → `npu.hardware.present` should be `true` when the device is detected.
 
@@ -142,20 +145,22 @@ sudo systemctl enable --now laser-detection
 | GET | `/health` | Service health |
 | GET | `/api/v1/camera/settings` | Camera settings (`exposure_ms`, gain, mount height) |
 | PUT | `/api/v1/camera/settings` | Update camera settings (`exposure_ms` in milliseconds; converted to µs internally) |
+
+`exposure_ms` is the configured/saved value. `exposure_ms_actual` (when present) is what the camera hardware applied — they should match after the frame-duration fix below. Long exposures (> ~66 ms) automatically lower the capture frame rate so libcamera is not capped by a fixed 15 fps window.
 | GET | `/api/v1/camera/snapshot` | JPEG still |
-| GET | `/api/v1/camera/stream` | MJPEG stream |
+| GET | `/api/v1/camera/stream` | MJPEG stream (`?size=main` 16:9 preview default; `?size=lores` square 640×640 for ML) |
 | POST | `/api/v1/calibration/apriltag` | Calibrate from AprilTag specs |
 | GET | `/api/v1/calibration/status` | Calibration status |
 | POST | `/api/v1/calibration/apriltag/preview` | Tag detection preview image |
 | GET | `/api/v1/calibration/apriltag/debug-image` | Calibrated grid + tags overlay with side lengths (no object detection) |
 | POST | `/api/v1/calibration/apriltag/generate-pdf` | Print-ready AprilTag sheet |
-| POST | `/api/v1/detection/detect` | Run object detection |
-| POST | `/api/v1/detection/segment` | Run instance segmentation |
-| POST | `/api/v1/detection/shapes` | Classical CV shape detection (mm geometry + rotation) |
+| GET | `/api/v1/detection/detect` | FastSAM detection (mm geometry + segmentation; query params) |
+| POST | `/api/v1/detection/capture-background` | Save empty-bed background reference (requires calibration) |
+| GET | `/api/v1/detection/background/status` | Background reference present / stale status |
+| DELETE | `/api/v1/detection/background` | Clear stored background reference |
 | GET | `/api/v1/detection/work-area-image` | Rectified bed JPEG (AprilTags at corners) |
 | GET | `/api/v1/detection/work-area-image/info` | Work-area image scale and mm→px mapping |
-| GET | `/api/v1/detection/shapes/debug-image` | Pipeline stage JPEG (`stage=all` for tiled mosaic) |
-| GET | `/api/v1/detection/debug-image` | Annotated debug JPEG |
+| GET | `/api/v1/detection/debug-image` | Pipeline stage JPEG (`stage=all` for tiled mosaic) |
 | GET | `/api/v1/dataset/classes` | List annotation classes |
 | PUT | `/api/v1/dataset/classes` | Update class list |
 | POST | `/api/v1/dataset/capture` | Capture frame into dataset |
@@ -286,26 +291,129 @@ python training/export_onnx.py models/best.pt
 # Copy models/detection.hef to neonbeam-lens.richwerks.local
 ```
 
-## Shape detection (classical CV + FastSAM)
+## Detection (FastSAM)
 
-Requires calibration with a derived `work_area`. Detects flat geometric workpieces (coasters, cards, bracelets) without YOLO training.
+Requires calibration with a derived `work_area`. Detects flat geometric workpieces (coasters, cards, bracelets) on a **white painted bed with dark/black parts**.
 
-`POST /api/v1/detection/shapes` returns per-object geometry in **bed millimeters**: `bbox_mm`, `width_mm`, `height_mm`, `rotation_deg`, `oriented_box_mm`, `segmentation_polygon_mm`. Set `include_work_area_coords: true` for pixel coords on the aligned work-area image.
+`GET /api/v1/detection/detect` returns per-object geometry in **bed millimeters**: `bbox_mm`, `width_mm`, `height_mm`, `rotation_deg`, `oriented_box_mm`, `segmentation_polygon_mm`. Query params:
+
+| Param | Default | Purpose |
+|-------|---------|---------|
+| `min_confidence` | config `detection.min_confidence` | Drop low-confidence detections |
+| `include_work_area_coords` | `false` | When `true`, also include `segmentation_polygon_work_area_px` and `oriented_box_work_area_px` on the warped work-area image (for UI overlays) |
+| `use_background_reference` | config `detection.use_background_reference` | Use stored empty-bed reference for bg_subtract post-filter |
+
+Response includes `fastsam_used`, `fastsam_device`, `fastsam_filter_detail`, `background_reference_used`, and `fastsam_error` when FastSAM fails. Responses use `Cache-Control: no-store`.
+
+### Pipeline architecture
+
+```
+warp → bg_subtract (foreground hint) → FastSAM (Hailo or CPU)
+     → post-filter masks (min area + bg overlap) → geometry → DetectionResponse
+```
+
+The bg post-filter drops corner-tag speckles and masks outside bg_subtract foreground. If bg_subtract covers more than ~45% of the frame (stale reference or overexposure), the filter auto-disables and raw FastSAM masks are used.
 
 `GET /api/v1/detection/work-area-image` returns a rectified JPEG: work area warped so AprilTag corners align to the image edges (origin tag at bottom-left). Companion `GET .../work-area-image/info` documents `pixels_per_mm` and mm→px mapping (`y_px = (height_mm - y_mm) * pixels_per_mm`).
 
-`GET /api/v1/detection/shapes/debug-image?stage=...` exposes pipeline stages (`raw`, `warp`, `mask`, `contours`, `shapes`, `fastsam`, `final`, or `all` for a labeled tiled mosaic). Tune thresholds under `shapes:` in `config/default.yaml`.
+`GET /api/v1/detection/debug-image?stage=...` exposes pipeline stages. Valid `stage` values match the tiles below plus `all` for a mosaic.
 
-FastSAM fallback uses `shapes.fastsam_model_path` on the Hailo-8L when classical CV finds no objects or low confidence (`shapes.backend: auto`).
+For `stage=all`, the mosaic includes only stages active on **this run** (minimum: `raw → warp → fastsam → final`). Optional tiles:
+
+- **bg_diff** / **bg_subtract** — when a stored background reference exists and is used
+- **fastsam_filtered** — when FastSAM returns masks and filtering keeps at least one
+
+The **bg_diff** tile is grayscale `|current − reference|` on the warped work area (black = no change; bright = pixel difference). Recapture the empty-bed reference if an empty bed is not mostly black.
+
+**fastsam** shows raw FastSAM masks; **fastsam_filtered** shows masks after bg overlap and minimum-area filtering; **final** shows detected geometry with mm labels. Set `show_center_coords=true` on the debug-image request to draw a crosshair and `center x, y mm` label on each object in the **final** tile (bed coordinates, bottom-left origin, Y-up).
+
+### Hailo bring-up (Pi deploy)
+
+Before testing on device:
+
+```bash
+hailortcli fw-control identify          # should show device
+sudo systemctl stop hailort.service     # required for direct VDevice access
+curl localhost:8000/health | jq '.npu, .detection.fastsam'
+```
+
+Expect `npu.hardware.present: true`, `detection.fastsam.device: hailo`, `loaded: true`. Default config sets `fastsam_device: hailo`. The Hailo `fast_sam_s.hef` returns raw YOLOv8-seg tensors — the service decodes them on the CPU (`fastsam_hailo_score_threshold`, `fastsam_hailo_nms_iou`, `fastsam_hailo_mask_threshold` in config). Without a HAT, set `fastsam_device: cpu` to use Ultralytics **FastSAM-s.pt** (~3–8 s/frame on Pi 5 at `fastsam_cpu_imgsz: 640`).
+
+**FastSAM debug logs** — each detection run emits `[fastsam]` lines to stdout (INFO level): frame sizes, raw Hailo output tensor shapes, max class score, pre/post-NMS boxes, and per-mask area/bbox. On the Pi:
+
+```bash
+journalctl -u laser-detection -f | grep fastsam
+```
+
+Or watch uvicorn stdout if running manually. Use these lines to see whether real objects score below threshold or NMS is keeping only corner speckles.
+
+### Empty-bed background reference
+
+After repainting the bed white, **recapture** an empty-bed reference — a stale dark-bed reference will poison `bg_subtract`:
+
+1. Clear the bed, then either `POST /api/v1/calibration/apriltag` with `"capture_empty_background": true`, or `POST /api/v1/detection/capture-background`.
+2. Place dark workpieces and run `GET /api/v1/detection/detect` or `GET .../debug-image?stage=all`.
+
+bg_subtract subtracts the stored warp against the current frame. Recapture when lighting, bed surface, camera position, or calibration scale changes — `GET .../background/status` reports `stale_reason` when metadata no longer matches.
+
+Disable background subtraction globally with `use_background_reference: false` in config, or per request:
+
+```bash
+curl ".../detection/detect?use_background_reference=false"
+```
+
+`GET .../debug-image?use_background_reference=false` accepts the same query parameter.
+
+### Exposure and glare on white paint
+
+White bed paint clips easily. Target **20–40 ms** exposure for preview and detection (`PUT /api/v1/camera/settings` with `exposure_ms`). Long exposures blow out the centre and produce false foreground in debug tiles.
+
+### Detection tuning (`detection:`)
+
+| Key | Purpose |
+|-----|---------|
+| `bg_subtract_min_diff` / `bg_subtract_blur_kernel_px` | Diff floor and blur before threshold (bg post-filter) |
+| `fastsam_bg_filter_enabled` | Post-filter FastSAM masks by bg_subtract overlap |
+| `fastsam_bg_filter_min_overlap` | Min fraction of mask pixels inside bg foreground (default 0.25) |
+| `fastsam_bg_filter_max_fg_ratio` | Skip bg filter when foreground exceeds this fraction of frame |
+| `fastsam_min_mask_area_px` | Drop tiny FastSAM speckle masks (default 800 px) |
+| `mask_morph_kernel_px` | Morphological close kernel for mask cleanup |
+| `mask_min_component_area_mm2` | Drop speckle blobs below this area before contouring |
+| `mask_max_components` | Scoring penalty when too many mask fragments |
+| `mask_max_component_area_ratio` | Reject masks where one blob covers too much of the bed (glare bridges) |
+| `mask_bridge_break_kernel_px` | Morphological open to break thin glare connections |
+| `morph_close_iterations` | Merge fragmented masks |
+| `glare_rejection_enabled` | Reject bright specular hot-spots |
+| `glare_l_delta` / `glare_l_absolute_min` | LAB L-channel thresholds relative to bed border |
+| `glare_suppression_l_cap` | Suppress weak diff speckle on overexposed paint in bg_subtract |
+| `fastsam_device` | `hailo` (default), `cpu`, or `auto` |
+| `fastsam_cpu_imgsz` | Ultralytics inference size (lower = faster on Pi) |
+| `use_background_reference` | Enable bg_subtract when a stored reference exists (overridable per request) |
+| `background_storage_path` | PNG + JSON metadata path for empty-bed capture |
+
+Diffuse or angle overhead lighting to reduce glare on white paint.
+
+### Migration from `/shapes`
+
+Replace `POST /api/v1/detection/shapes` with:
+
+```bash
+curl ".../detection/detect?min_confidence=0.35"
+curl ".../detection/detect?include_work_area_coords=true"
+```
+
+Background capture: `POST .../detection/capture-background`  
+Debug mosaic: `GET .../detection/debug-image?stage=all`
 
 ## Work surface prep
 
-Matte black is a good default for light and colored parts. **Do not use a checkerboard pattern** on the bed — it creates false contours.
+**White painted bed + dark/black workpieces** is the default detection scenario. Recapture the empty-bed background after any repaint or surface change.
 
-- **Angled LED bar** (best ROI): rim-light edges for black slate and dark anodized parts
-- **Per-object gray mat** under black slate when needed
-- Optional **mid-gray matte recoat** if dark-on-dark is frequent
-- AprilTags at corners already define the ROI; optional tape border inside tags for clipping only
+- Target matte white paint; avoid glossy finish that creates specular hotspots
+- **Angled LED bar**: rim-light edges help segmentation find part outlines
+- Keep exposure short (20–40 ms) to avoid clipping white paint
+- AprilTags at corners define the ROI; optional tape border inside tags for clipping only
+- **Do not use a checkerboard pattern** on the bed — it creates false contours
 
 ## Configuration
 
@@ -319,6 +427,6 @@ pytest
 uvicorn app.main:app --reload
 ```
 
-Without picamera2/Hailo hardware, the service uses a mock camera and CPU detection when a model is available.
+Without picamera2/Hailo hardware, the service uses a mock camera. FastSAM CPU inference works when Ultralytics and a `.pt` model are available.
 
 Run the API with `.\scripts\start.ps1`, then `cd web && npm run dev` for the annotation UI at `http://localhost:5173/annotate/`, or build with `npm run build` and open `http://localhost:8000/annotate`.

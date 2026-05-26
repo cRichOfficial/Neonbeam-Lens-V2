@@ -76,7 +76,9 @@ export interface ExportStatusResponse {
 
 export interface CameraSettings {
   exposure_ms: number;
+  exposure_ms_actual?: number | null;
   analogue_gain: number;
+  analogue_gain_actual?: number | null;
   mount_height_mm: number;
   main_resolution: number[];
   lores_resolution: number[];

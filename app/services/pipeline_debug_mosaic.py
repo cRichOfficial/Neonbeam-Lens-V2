@@ -7,6 +7,20 @@ MOSAIC_BG = (26, 26, 26)
 HEADER_HEIGHT = 28
 
 
+def put_text_outlined(
+    image: np.ndarray,
+    text: str,
+    org: tuple[int, int],
+    *,
+    font_scale: float = 0.55,
+    color: tuple[int, int, int] = (255, 255, 255),
+    thickness: int = 1,
+    font: int = cv2.FONT_HERSHEY_SIMPLEX,
+) -> None:
+    cv2.putText(image, text, org, font, font_scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
+    cv2.putText(image, text, org, font, font_scale, color, thickness, cv2.LINE_AA)
+
+
 def compose_stage_mosaic(
     stages: list[tuple[str, np.ndarray]],
     *,
@@ -34,16 +48,7 @@ def compose_stage_mosaic(
         y0 = row * cell_h
 
         cv2.rectangle(canvas, (x0, y0), (x0 + cell_w - 1, y0 + cell_h - 1), (60, 60, 60), 1)
-        cv2.putText(
-            canvas,
-            label,
-            (x0 + 8, y0 + 20),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            (220, 220, 220),
-            1,
-            cv2.LINE_AA,
-        )
+        put_text_outlined(canvas, label, (x0 + 8, y0 + 20), font_scale=0.55, color=(220, 220, 220))
 
         bgr = _ensure_bgr(image)
         ih, iw = bgr.shape[:2]

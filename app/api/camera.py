@@ -48,7 +48,7 @@ def _mjpeg_generator(camera: CameraService, stream: str):
 
 @router.get("/stream")
 def camera_stream(
-    size: str = Query(default="lores", pattern="^(main|lores)$"),
+    size: str = Query(default="main", pattern="^(main|lores)$"),
     camera: CameraService = Depends(get_camera_service),
 ) -> StreamingResponse:
     return StreamingResponse(

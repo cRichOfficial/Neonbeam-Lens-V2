@@ -1,3 +1,6 @@
+# Pi dependencies — piwheels provides ARM CPU PyTorch wheels (no NVIDIA CUDA on aarch64).
+--extra-index-url https://www.piwheels.org/simple
+
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 pydantic-settings>=2.6.0
@@ -7,3 +10,7 @@ pupil-apriltags>=1.0.4
 reportlab>=4.2.0
 pyyaml>=6.0.2
 python-multipart>=0.0.12
+# Install CPU torch before ultralytics (setup-pi.sh also pre-installs to pin the wheel).
+torch
+torchvision
+ultralytics>=8.3.0
