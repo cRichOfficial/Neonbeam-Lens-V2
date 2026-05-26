@@ -11,7 +11,6 @@ FastAPI service for a Raspberry Pi 5 laser engraver with CSI camera and Hailo-8L
 - AprilTag PDF generator (IDs 0–3, to-scale on US Letter)
 - FastSAM instance segmentation with Hailo NPU (production) and Ultralytics CPU fallback (dev)
 - Bed-calibrated shape detection (mm geometry, rotation, segmentation polygons)
-- Custom model training pipeline scaffold
 
 ## Quick Start (neonbeam-lens.richwerks.local)
 
@@ -103,7 +102,7 @@ deploy\deploy.cmd restart
 
 The script creates a tarball (excluding `.venv`, `data/`, `models/`, `__pycache__`, etc.), normalizes shell script line endings to LF, uploads with `scp`, and extracts on the remote host.
 
-The script tests SSH **before** building the web UI or creating the archive, then retries transient SSH failures (timeouts, connection reset) with configurable timeouts in `deploy.config.json`.
+The script tests SSH **before** creating the archive, then retries transient SSH failures (timeouts, connection reset) with configurable timeouts in `deploy.config.json`.
 
 **Hostname not resolving?** Prefer the full hostname (not bare `neonbeam-lens`):
 
@@ -159,41 +158,10 @@ sudo systemctl enable --now laser-detection
 | GET | `/api/v1/detection/work-area-image` | Rectified bed JPEG (AprilTags at corners) |
 | GET | `/api/v1/detection/work-area-image/info` | Work-area image scale and mm→px mapping |
 | GET | `/api/v1/detection/debug-image` | Pipeline stage JPEG (`stage=all` for tiled mosaic) |
-| GET | `/api/v1/dataset/classes` | List annotation classes |
-| PUT | `/api/v1/dataset/classes` | Update class list |
-| POST | `/api/v1/dataset/capture` | Capture frame into dataset |
-| GET | `/api/v1/dataset/images` | List captured images |
-| GET | `/api/v1/dataset/images/{id}` | Image metadata + annotations |
-| GET | `/api/v1/dataset/images/{id}/file` | JPEG file (`?variant=thumb\|preview\|full`) |
-| GET | `/api/v1/dataset/stats` | Class counts and reviewed image stats |
-| PUT | `/api/v1/dataset/images/{id}/annotations` | Save annotations |
-| PATCH | `/api/v1/dataset/images/{id}` | Mark reviewed / notes |
-| DELETE | `/api/v1/dataset/images/{id}` | Delete image |
-| POST | `/api/v1/dataset/export` | Export detection + segmentation datasets |
-| GET | `/api/v1/dataset/export/status` | Last export summary |
 
 `exposure_ms` is the configured/saved value. `exposure_ms_actual` (when present) is what the camera hardware applied — they should match after the frame-duration fix below. Long exposures (> ~66 ms) automatically lower the capture frame rate so libcamera is not capped by a fixed 15 fps window.
 
-## Annotation Web UI
-
-Open **`http://neonbeam-lens.richwerks.local:8000/annotate`** in a browser on the same network.
-
-Built with **React + Vite** (`web/`). Production builds go to `web/dist/` and are served by FastAPI.
-
-```bash
-# Dev (API + Vite hot reload)
-.\scripts\start.ps1          # or bash scripts/start.sh
-cd web && npm install && npm run dev
-
-# Production build (also run automatically by deploy/deploy.ps1)
-cd web && npm ci && npm run build
-```
-
-1. **Capture tab** — live camera preview (stream active only on this tab); capture frames into the dataset
-2. **Annotate tab** — draw **boxes** (most workpieces) or **polygons** (irregular parts); assign classes; mark reviewed
-3. **Export tab** — one click exports **both** YOLO detection and segmentation datasets (boxes auto-convert to 4-corner polygons for seg)
-
-See [web/README.md](web/README.md) for keyboard shortcuts, dev proxy, and performance notes.
+### Print AprilTags
 
 1. `POST /api/v1/calibration/apriltag/generate-pdf` with `size_mm` and `safe_zone_padding_mm`
 2. Print at **100% scale** (Actual size — disable "Fit to page")
@@ -257,40 +225,6 @@ camera:
     dist: [-0.25, 0.05, 0, 0, 0]   # k1, k2, p1, p2, k3
 ```
 
-## Custom Model Training
-
-See [training/compile_hef.md](training/compile_hef.md) for HEF compilation after training.
-
-### 1. Collect and label data
-
-Use the [annotation UI](http://neonbeam-lens.richwerks.local:8000/annotate) or capture via API:
-
-```bash
-curl -X POST http://neonbeam-lens.richwerks.local:8000/api/v1/dataset/capture
-```
-
-Define classes in the UI, annotate, mark images reviewed, then **Export datasets**.
-
-### 2. Train detection model
-
-```bash
-python training/train.py --data data/dataset/export/detection/dataset.yaml
-```
-
-### 3. Train segmentation model (optional)
-
-```bash
-python training/train.py --data data/dataset/export/segmentation/dataset.yaml --model yolov8n-seg.pt
-```
-
-### 4. Deploy to Pi
-
-```bash
-python training/export_onnx.py models/best.pt
-# Compile to .hef on x86 — see training/compile_hef.md
-# Copy models/detection.hef to neonbeam-lens.richwerks.local
-```
-
 ## Detection (FastSAM)
 
 Requires calibration with a derived `work_area`. Detects flat geometric workpieces (coasters, cards, bracelets) on a **white painted bed with dark/black parts**.
@@ -314,7 +248,10 @@ warp → bg_subtract (foreground hint) → FastSAM (Hailo or CPU)
 
 The bg post-filter drops corner-tag speckles and masks outside bg_subtract foreground. If bg_subtract covers more than ~45% of the frame (stale reference or overexposure), the filter auto-disables and raw FastSAM masks are used.
 
-`GET /api/v1/detection/work-area-image` returns a rectified JPEG: work area warped so AprilTag corners align to the image edges (origin tag at bottom-left). Companion `GET .../work-area-image/info` documents `pixels_per_mm` and mm→px mapping (`y_px = (height_mm - y_mm) * pixels_per_mm`).
+`GET /api/v1/detection/work-area-image` and `GET .../work-area-image/info` are **optional** — not required for `GET /detect`, which warps internally and returns the same scale in `work_area_image`.
+
+- **`/work-area-image`** — rectified bed JPEG (AprilTag corners → image edges). Query params: `pixels_per_mm` or `max_edge_px` (default 1024) for resolution; `quality` for JPEG compression only.
+- **`/work-area-image/info`** — same dimensions and `pixels_per_mm` without capturing a frame. Use with `include_work_area_coords=true` on `/detect` to overlay detections on the warped image.
 
 `GET /api/v1/detection/debug-image?stage=...` exposes pipeline stages. Valid `stage` values match the tiles below plus `all` for a mosaic.
 
@@ -429,4 +366,4 @@ uvicorn app.main:app --reload
 
 Without picamera2/Hailo hardware, the service uses a mock camera. FastSAM CPU inference works when Ultralytics and a `.pt` model are available.
 
-Run the API with `.\scripts\start.ps1`, then `cd web && npm run dev` for the annotation UI at `http://localhost:5173/annotate/`, or build with `npm run build` and open `http://localhost:8000/annotate`.
+Run the API with `.\scripts\start.ps1` or `bash scripts/start.sh`.

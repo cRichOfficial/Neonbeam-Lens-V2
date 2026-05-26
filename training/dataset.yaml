@@ -1,6 +1,0 @@
-path: ../data/dataset/export/detection
-train: images/train
-val: images/val
-nc: 1
-names:
-- only

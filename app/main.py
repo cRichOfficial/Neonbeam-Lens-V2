@@ -4,13 +4,11 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 
 from app.api.calibration import router as calibration_router
 from app.api.camera import router as camera_router
-from app.api.dataset import router as dataset_router
 from app.api.detection import router as detection_router
-from app.config import PROJECT_ROOT, get_config_store
+from app.config import get_config_store
 from app.services.calibration_service import get_calibration_service
 from app.services.camera_service import get_camera_service
 from app.services.fastsam_detector import FASTSAM_MODEL_KEY, get_fastsam_detector, resolve_fastsam_path
@@ -76,12 +74,6 @@ def create_app() -> FastAPI:
     app.include_router(camera_router)
     app.include_router(calibration_router)
     app.include_router(detection_router)
-    app.include_router(dataset_router)
-
-    web_dist = PROJECT_ROOT / "web" / "dist"
-    web_dir = web_dist if web_dist.exists() else PROJECT_ROOT / "web"
-    if web_dir.exists():
-        app.mount("/annotate", StaticFiles(directory=str(web_dir), html=True), name="annotate")
 
     @app.get("/health")
     def health_check() -> dict:

@@ -131,19 +131,6 @@ class CalibrationConfig(BaseModel):
         return path
 
 
-class DatasetConfig(BaseModel):
-    storage_path: str = "data/dataset"
-    train_val_split: float = 0.8
-    classes: list[str] = Field(default_factory=list)
-
-    @property
-    def resolved_storage_path(self) -> Path:
-        path = Path(self.storage_path)
-        if not path.is_absolute():
-            path = PROJECT_ROOT / path
-        return path
-
-
 class AppConfig(BaseModel):
     bed: BedFrameConfig = Field(default_factory=BedFrameConfig)
     camera: CameraConfig = Field(default_factory=CameraConfig)
@@ -151,7 +138,6 @@ class AppConfig(BaseModel):
     detection: DetectionConfig = Field(default_factory=DetectionConfig)
     parallax: ParallaxConfig = Field(default_factory=ParallaxConfig)
     calibration: CalibrationConfig = Field(default_factory=CalibrationConfig)
-    dataset: DatasetConfig = Field(default_factory=DatasetConfig)
 
 
 class Settings(BaseSettings):

@@ -424,7 +424,6 @@ $ExcludePatterns = @(
     ".mypy_cache",
     "data",
     "models",
-    "web/node_modules",
     "*.pyc",
     "*.pyo",
     "*.hef",
@@ -434,27 +433,6 @@ $ExcludePatterns = @(
 )
 
 Write-Host "Project root: $ProjectRoot"
-
-$WebDir = Join-Path $ProjectRoot "web"
-$PackageJson = Join-Path $WebDir "package.json"
-if (Test-Path -LiteralPath $PackageJson) {
-    Require-Command npm
-    Write-Host "Building annotation UI (web/dist)..."
-    Push-Location $WebDir
-    try {
-        if (Test-Path "package-lock.json") {
-            npm ci
-        } else {
-            npm install
-        }
-        if ($LASTEXITCODE -ne 0) { throw "npm install failed with exit code $LASTEXITCODE" }
-        npm run build
-        if ($LASTEXITCODE -ne 0) { throw "npm run build failed with exit code $LASTEXITCODE" }
-    }
-    finally {
-        Pop-Location
-    }
-}
 
 Write-Host "Creating archive (excluding build/runtime artifacts)..."
 

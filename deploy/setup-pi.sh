@@ -108,7 +108,7 @@ pip install -r requirements-pi.txt
 echo "Verifying picamera2 import..."
 python -c "from picamera2 import Picamera2; print('picamera2 OK')"
 
-mkdir -p models data/dataset/images data/dataset/labels config
+mkdir -p models config
 
 FASTSAM_HEF="models/fast_sam_s.hef"
 FASTSAM_URL="https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v2.18.0/hailo8l/fast_sam_s.hef"

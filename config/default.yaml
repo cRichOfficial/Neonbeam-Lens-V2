@@ -76,7 +76,3 @@ calibration:
   scale_refinement_tolerance_mm: 0.5
   max_tag_size_error_mm: 1.0
   storage_path: config/calibration.json
-dataset:
-  storage_path: data/dataset
-  train_val_split: 0.8
-  classes: []
