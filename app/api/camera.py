@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response, StreamingResponse
 
-from app.schemas.camera import CameraSettingsResponse, CameraSettingsUpdate
+from app.schemas.camera import CameraSettingsResponse, CameraSettingsUpdate, CameraStreamSize
 from app.services.camera_service import CameraService, get_camera_service
 
 router = APIRouter(prefix="/api/v1/camera", tags=["camera"])
@@ -48,11 +48,18 @@ def _mjpeg_generator(camera: CameraService, stream: str):
 
 @router.get("/stream")
 def camera_stream(
-    size: str = Query(default="main", pattern="^(main|lores)$"),
+    size: CameraStreamSize = Query(
+        default="preview",
+        description=(
+            "Stream resolution. `preview` (default): hardware MJPEG 960×540 16:9. "
+            "`main`: full-res 1920×1080 software encode. `lores`: alias for `preview`."
+        ),
+    ),
     camera: CameraService = Depends(get_camera_service),
 ) -> StreamingResponse:
+    stream = "preview" if size == "lores" else size
     return StreamingResponse(
-        _mjpeg_generator(camera, stream=size),
+        _mjpeg_generator(camera, stream=stream),
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={
             "Cache-Control": "no-cache, private",

@@ -9,8 +9,10 @@ camera:
   - 1920
   - 1080
   lores_resolution:
-  - 640
-  - 640
+  - 960
+  - 540
+  stream_jpeg_quality: 80
+  stream_max_fps: 15.0
   hfov_deg: 102.0
   distortion_model: pinhole
   auto_distortion: true

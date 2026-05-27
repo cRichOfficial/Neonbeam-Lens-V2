@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+CameraStreamSize = Literal["preview", "main", "lores"]
 
 
 class CameraSettingsResponse(BaseModel):

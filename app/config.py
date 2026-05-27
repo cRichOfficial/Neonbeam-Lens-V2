@@ -41,7 +41,9 @@ class CameraConfig(BaseModel):
     exposure_us: int = 10000
     analogue_gain: float = 1.0
     main_resolution: list[int] = Field(default_factory=lambda: [1920, 1080])
-    lores_resolution: list[int] = Field(default_factory=lambda: [640, 640])
+    lores_resolution: list[int] = Field(default_factory=lambda: [960, 540])
+    stream_jpeg_quality: int = Field(default=80, ge=1, le=100)
+    stream_max_fps: float = Field(default=15.0, gt=0)
     hfov_deg: float = 102.0
     distortion_model: Literal["pinhole", "fisheye"] = "pinhole"
     auto_distortion: bool = True

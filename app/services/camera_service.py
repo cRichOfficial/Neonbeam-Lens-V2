@@ -51,6 +51,24 @@ class StreamingOutput(io.BufferedIOBase):
         return False
 
 
+def iter_streaming_output_frames(output: StreamingOutput, is_active) -> Any:
+    """Yield each new hardware-encoded JPEG; wait for notify before every read."""
+    while is_active():
+        with output.condition:
+            output.condition.wait(timeout=5.0)
+            frame = output.frame
+        if frame is not None:
+            yield frame
+
+
+def _encode_jpeg_rgb(frame: np.ndarray, quality: int) -> bytes:
+    bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR) if frame.shape[2] == 3 else frame
+    ok, encoded = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    if not ok:
+        raise RuntimeError("Failed to encode JPEG")
+    return encoded.tobytes()
+
+
 class CameraBackend(ABC):
     @abstractmethod
     def start(self) -> None: ...
@@ -80,7 +98,10 @@ class CameraBackend(ABC):
     def get_controls(self) -> dict[str, Any]: ...
 
     @abstractmethod
-    def iter_mjpeg_frames(self): ...
+    def iter_preview_mjpeg_frames(self): ...
+
+    @abstractmethod
+    def iter_main_mjpeg_frames(self): ...
 
 
 class MockCameraBackend(CameraBackend):
@@ -158,20 +179,21 @@ class MockCameraBackend(CameraBackend):
             "AnalogueGain": self._analogue_gain,
         }
 
-    def iter_mjpeg_frames(self):
-        while self._started:
-            jpeg = self.capture_jpeg()
-            yield jpeg
-            time.sleep(1 / 15)
-
-    def iter_lores_mjpeg_frames(self):
+    def iter_preview_mjpeg_frames(self):
+        cfg = self.config_store.config.camera
+        interval = 1.0 / cfg.stream_max_fps
         while self._started:
             frame = self.capture_lores_frame()
-            ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-            if not ok:
-                raise RuntimeError("Failed to encode mock lores JPEG")
-            yield encoded.tobytes()
-            time.sleep(1 / 15)
+            yield _encode_jpeg_rgb(frame, cfg.stream_jpeg_quality)
+            time.sleep(interval)
+
+    def iter_main_mjpeg_frames(self):
+        cfg = self.config_store.config.camera
+        interval = 1.0 / cfg.stream_max_fps
+        while self._started:
+            frame = self.capture_frame()
+            yield _encode_jpeg_rgb(frame, cfg.stream_jpeg_quality)
+            time.sleep(interval)
 
 
 class Picamera2Backend(CameraBackend):
@@ -197,13 +219,13 @@ class Picamera2Backend(CameraBackend):
             config = picam2.create_video_configuration(
                 main={"size": main_size, "format": "RGB888"},
                 lores={"size": lores_size, "format": "RGB888"},
-                buffer_count=2,
+                buffer_count=4,
                 controls=controls_for_manual_exposure(cfg.exposure_us, cfg.analogue_gain),
             )
             picam2.configure(config)
             output = StreamingOutput()
             encoder = JpegEncoder()
-            picam2.start_recording(encoder, FileOutput(output))
+            picam2.start_recording(encoder, FileOutput(output), name="lores")
         except Exception:
             try:
                 picam2.close()
@@ -260,18 +282,8 @@ class Picamera2Backend(CameraBackend):
         return frame
 
     def capture_jpeg(self) -> bytes:
-        if self._output is None:
-            raise RuntimeError("Camera stream output not initialized")
-        with self._output.condition:
-            if self._output.frame is None:
-                self._output.condition.wait(timeout=5.0)
-            if self._output.frame is None:
-                frame = self.capture_frame()
-                ok, encoded = cv2.imencode(".jpg", cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-                if not ok:
-                    raise RuntimeError("Failed to encode JPEG")
-                return encoded.tobytes()
-            return self._output.frame
+        frame = self.capture_frame()
+        return _encode_jpeg_rgb(frame, 90)
 
     def set_controls(self, exposure_us: int | None, analogue_gain: float | None) -> None:
         if self._picam2 is None:
@@ -298,26 +310,18 @@ class Picamera2Backend(CameraBackend):
             "AnalogueGain": metadata.get("AnalogueGain"),
         }
 
-    def iter_mjpeg_frames(self):
+    def iter_preview_mjpeg_frames(self):
         if self._output is None:
             return
-        while self._started:
-            with self._output.condition:
-                if self._output.frame is None:
-                    self._output.condition.wait(timeout=5.0)
-                frame = self._output.frame
-            if frame is not None:
-                yield frame
+        yield from iter_streaming_output_frames(self._output, lambda: self._started)
 
-    def iter_lores_mjpeg_frames(self):
+    def iter_main_mjpeg_frames(self):
+        cfg = self.config_store.config.camera
+        interval = 1.0 / cfg.stream_max_fps
         while self._started:
-            frame = self.capture_lores_frame()
-            bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR) if frame.shape[2] == 3 else frame
-            ok, encoded = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-            if not ok:
-                raise RuntimeError("Failed to encode lores JPEG")
-            yield encoded.tobytes()
-            time.sleep(1 / 15)
+            frame = self.capture_frame()
+            yield _encode_jpeg_rgb(frame, cfg.stream_jpeg_quality)
+            time.sleep(interval)
 
 
 class CameraService:
@@ -430,11 +434,11 @@ class CameraService:
     def capture_lores_frame(self) -> np.ndarray:
         return self.backend.capture_lores_frame()
 
-    def iter_mjpeg_frames(self, stream: str = "main"):
-        if stream == "lores":
-            yield from self.backend.iter_lores_mjpeg_frames()
+    def iter_mjpeg_frames(self, stream: str = "preview"):
+        if stream == "main":
+            yield from self.backend.iter_main_mjpeg_frames()
         else:
-            yield from self.backend.iter_mjpeg_frames()
+            yield from self.backend.iter_preview_mjpeg_frames()
 
 
 _camera_service: CameraService | None = None

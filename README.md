@@ -145,7 +145,7 @@ sudo systemctl enable --now laser-detection
 | GET | `/api/v1/camera/settings` | Camera settings (`exposure_ms`, gain, mount height) |
 | PUT | `/api/v1/camera/settings` | Update camera settings (`exposure_ms` in milliseconds; converted to µs internally) |
 | GET | `/api/v1/camera/snapshot` | JPEG still |
-| GET | `/api/v1/camera/stream` | MJPEG stream (`?size=main` 16:9 preview default; `?size=lores` square 640×640 for ML) |
+| GET | `/api/v1/camera/stream` | MJPEG stream (`?size=preview` default 960×540 16:9; `?size=main` full-res software encode; `?size=lores` alias for preview) |
 | POST | `/api/v1/calibration/apriltag` | Calibrate from AprilTag specs |
 | GET | `/api/v1/calibration/status` | Calibration status |
 | POST | `/api/v1/calibration/apriltag/preview` | Tag detection preview image |
