@@ -131,11 +131,31 @@ copy deploy\deploy.config.example.json deploy\deploy.config.json
 
 ## systemd Service
 
+Install the unit with your Pi user and project path (do not copy the template verbatim — it contains `@USER@` / `@PROJECT_DIR@` placeholders):
+
 ```bash
-sudo cp deploy/laser-detection.service /etc/systemd/system/
+cd ~/object-detection-v2
+sed -e "s|@USER@|$(id -un)|g" \
+    -e "s|@GROUP@|$(id -gn)|g" \
+    -e "s|@PROJECT_DIR@|$(pwd)|g" \
+    deploy/laser-detection.service | sudo tee /etc/systemd/system/laser-detection.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now laser-detection
 ```
+
+After start, confirm the NPU is not self-blocked:
+
+```bash
+curl -s http://localhost:8000/health | jq '.npu.blockers, .npu.models, .detection.fastsam'
+```
+
+Expect `npu.blockers: []` and FastSAM loaded with `device: hailo`. If detection still fails, check logs:
+
+```bash
+journalctl -u laser-detection -b | grep -E 'fastsam|Hailo|blocker'
+```
+
+For manual testing, stop the service first (`sudo systemctl stop laser-detection`) or use `./scripts/start.sh --stop-service`.
 
 ## API Endpoints
 

@@ -21,12 +21,27 @@ def test_detect_npu_blockers_finds_systemd_service() -> None:
         "app.services.hailo_diagnostics._run_command",
         side_effect=[
             subprocess.CompletedProcess(args=[], returncode=0, stdout="active\n", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="1234\n", stderr=""),
             None,
             None,
         ],
     ):
         blockers = detect_npu_blockers(current_pid=9999)
     assert any("laser-detection" in blocker for blocker in blockers)
+
+
+def test_detect_npu_blockers_ignores_own_systemd_service() -> None:
+    with patch(
+        "app.services.hailo_diagnostics._run_command",
+        side_effect=[
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="active\n", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="9999\n", stderr=""),
+            None,
+            None,
+        ],
+    ):
+        blockers = detect_npu_blockers(current_pid=9999)
+    assert blockers == []
 
 
 def test_detect_npu_blockers_finds_other_uvicorn() -> None:

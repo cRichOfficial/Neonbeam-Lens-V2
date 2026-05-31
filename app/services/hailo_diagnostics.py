@@ -111,6 +111,23 @@ def detect_hailort_service_status() -> str:
     return result.stdout.strip() or "unknown"
 
 
+def _systemd_main_pid(unit: str) -> int | None:
+    """Return the MainPID of a systemd unit, or None if unavailable."""
+    result = _run_command(
+        ["systemctl", "show", "-p", "MainPID", "--value", unit],
+        timeout=2.0,
+    )
+    if result is None:
+        return None
+    text = result.stdout.strip()
+    if not text or text == "0":
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
 def detect_npu_blockers(*, current_pid: int | None = None) -> list[str]:
     """Return duplicate app instances that would contend for camera/NPU access."""
     pid = current_pid if current_pid is not None else os.getpid()
@@ -118,10 +135,12 @@ def detect_npu_blockers(*, current_pid: int | None = None) -> list[str]:
 
     service_result = _run_command(["systemctl", "is-active", "laser-detection"], timeout=2.0)
     if service_result is not None and service_result.stdout.strip() == "active":
-        blockers.append(
-            "systemd service 'laser-detection' is active on port 8000 "
-            "(run: sudo systemctl stop laser-detection, or use that instance instead)"
-        )
+        main_pid = _systemd_main_pid("laser-detection")
+        if main_pid is None or main_pid != pid:
+            blockers.append(
+                "systemd service 'laser-detection' is active on port 8000 "
+                "(run: sudo systemctl stop laser-detection, or use that instance instead)"
+            )
 
     pgrep_result = _run_command(["pgrep", "-af", "uvicorn app.main:app"], timeout=2.0)
     if pgrep_result is not None and pgrep_result.stdout.strip():

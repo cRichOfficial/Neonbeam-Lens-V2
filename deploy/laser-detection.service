@@ -1,15 +1,18 @@
 [Unit]
 Description=Laser Engraver Object Detection API
 After=network.target
+Conflicts=hailort.service
 
 [Service]
 Type=simple
-User=crichards999
-Group=crichards999
-WorkingDirectory=/home/crichards999/object-detection-v2
+User=@USER@
+Group=@GROUP@
+SupplementaryGroups=video render
+WorkingDirectory=@PROJECT_DIR@
+EnvironmentFile=-@PROJECT_DIR@/.env
 Environment=PYTHONUNBUFFERED=1
 ExecStartPre=-+/usr/bin/systemctl stop hailort.service
-ExecStart=/home/crichards999/object-detection-v2/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+ExecStart=@PROJECT_DIR@/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 Restart=on-failure
 RestartSec=5
 
