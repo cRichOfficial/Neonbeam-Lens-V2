@@ -13,6 +13,7 @@ from reportlab.pdfgen import canvas
 
 from app.config import get_config_store
 from app.schemas.calibration import AprilTagPdfRequest
+from app.services.apriltag_marker import generate_tag36h11_image
 
 LETTER_WIDTH_MM = 215.9
 LETTER_HEIGHT_MM = 279.4
@@ -23,12 +24,6 @@ GUTTER_MM = 8.0
 
 def _mm_to_pt(value_mm: float) -> float:
     return value_mm * mm
-
-
-def _generate_tag_image(tag_id: int, pixel_size: int) -> np.ndarray:
-    dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
-    image = cv2.aruco.generateImageMarker(dictionary, tag_id, pixel_size, borderBits=1)
-    return cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
 
 
 def _validate_layout(size_mm: float, safe_zone_padding_mm: float, page_margin_mm: float) -> None:
@@ -105,7 +100,7 @@ def generate_apriltag_pdf(request: AprilTagPdfRequest) -> bytes:
 
         tag_x_pt = x_pt + pad_pt
         tag_y_pt = y_pt + pad_pt
-        tag_image = _generate_tag_image(tag_id, pixel_size)
+        tag_image = generate_tag36h11_image(tag_id, pixel_size)
         pdf.drawImage(
             ImageReader(_ndarray_to_png_bytes(tag_image)),
             tag_x_pt,

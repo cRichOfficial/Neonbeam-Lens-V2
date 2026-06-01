@@ -164,7 +164,7 @@ def debug_image(
         default="final",
         description=(
             "Pipeline stage JPEG. Use `all` for a tiled mosaic of every stage active on this run "
-            "(typically raw → warp → fastsam → final; adds bg_diff/bg_subtract when a background "
+            "(typically raw → warp → fastsam → final; adds bg_diff/texture_diff/bg_subtract when a background "
             "reference is stored and used; adds fastsam_filtered when FastSAM returns masks)."
         ),
     ),

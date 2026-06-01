@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Literal
 
 import cv2
 import numpy as np
 
 from app.schemas.common import BoundingBox
+
+BgSubtractMode = Literal["intensity", "texture", "fused"]
 from app.schemas.detection import ShapeKind
 
 
@@ -64,8 +67,11 @@ class ShapeDetectorConfig:
     glare_l_delta: float = 40.0
     glare_l_absolute_min: float = 200.0
     use_background_reference: bool = True
+    bg_subtract_mode: BgSubtractMode = "intensity"
     bg_subtract_min_diff: int = 15
     bg_subtract_blur_kernel_px: int = 5
+    bg_texture_min_diff: int = 12
+    bg_texture_blur_kernel_px: int = 5
 
 
 def _morph_kernel(size_px: int) -> np.ndarray:

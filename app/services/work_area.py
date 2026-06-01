@@ -202,25 +202,24 @@ def _classify_corner_tags(origin_tag_id: int, centers: dict[int, np.ndarray]) ->
     if origin_tag_id not in centers:
         raise ValueError(f"Origin tag {origin_tag_id} not found in detections")
 
-    median_y = float(np.median([center[1] for center in centers.values()]))
-    bottom_ids = [tag_id for tag_id, center in centers.items() if center[1] >= median_y]
-    top_ids = [tag_id for tag_id, center in centers.items() if center[1] < median_y]
+    by_x = sorted(
+        centers.items(),
+        key=lambda item: (float(item[1][0]), float(item[1][1])),
+    )
+    left_pair = by_x[:2]
+    right_pair = by_x[2:]
 
-    br_candidates = [tag_id for tag_id in bottom_ids if tag_id != origin_tag_id]
-    if len(br_candidates) != 1:
-        raise ValueError(
-            "Could not identify the +X corner tag from geometry. "
-            f"Expected one bottom-row tag besides origin; found {br_candidates}."
-        )
-    br_id = br_candidates[0]
+    bl_id = max(left_pair, key=lambda item: float(item[1][1]))[0]
+    tl_id = min(left_pair, key=lambda item: float(item[1][1]))[0]
+    br_id = max(right_pair, key=lambda item: float(item[1][1]))[0]
+    tr_id = min(right_pair, key=lambda item: float(item[1][1]))[0]
 
-    if len(top_ids) != 2:
+    if bl_id != origin_tag_id:
         raise ValueError(
-            "Could not identify the top row tags from geometry. "
-            f"Expected two tags above the horizontal midline; found {top_ids}."
+            "Origin tag does not match bottom-left geometry from tag positions. "
+            f"Expected origin tag {origin_tag_id}, but geometric bottom-left is tag {bl_id}. "
+            "Check origin_tag_id, tag placement, and camera orientation."
         )
-    top_sorted = sorted(top_ids, key=lambda tag_id: centers[tag_id][0])
-    tl_id, tr_id = top_sorted[0], top_sorted[1]
 
     return {"origin": origin_tag_id, "br": br_id, "tl": tl_id, "tr": tr_id}
 

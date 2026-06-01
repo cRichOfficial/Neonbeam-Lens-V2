@@ -37,6 +37,7 @@ def extract_bg_subtract_mask(
         cfg,
         pixels_per_mm=pixels_per_mm,
         bed_l=bed_l,
+        mode=cfg.bg_subtract_mode,
     )
     if track is None:
         return None

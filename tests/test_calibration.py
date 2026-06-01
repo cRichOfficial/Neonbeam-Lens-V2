@@ -128,6 +128,31 @@ def _synthetic_detections(
     return detections
 
 
+def _detections_from_centers(
+    centers: dict[int, tuple[float, float]],
+    *,
+    half_edge_px: float = 15.0,
+) -> list[dict]:
+    detections: list[dict] = []
+    for tag_id, (cx, cy) in centers.items():
+        corners_px = [
+            [cx - half_edge_px, cy - half_edge_px],
+            [cx + half_edge_px, cy - half_edge_px],
+            [cx + half_edge_px, cy + half_edge_px],
+            [cx - half_edge_px, cy + half_edge_px],
+        ]
+        detections.append(
+            {
+                "id": tag_id,
+                "center_px": [cx, cy],
+                "corners_px": corners_px,
+                "hamming": 0,
+                "decision_margin": 100.0,
+            }
+        )
+    return detections
+
+
 def _apply_pinhole_distortion(
     undist_points_px: np.ndarray,
     camera_matrix: np.ndarray,
@@ -443,6 +468,33 @@ def test_derive_work_area_from_synthetic_detections(calibration_env) -> None:
     assert origin.y_mm == pytest.approx(0, abs=0.1)
     assert br.x_mm == pytest.approx(derived.work_area.width_mm, abs=5)
     assert br.y_mm == pytest.approx(0, abs=0.1)
+
+
+def test_classify_corner_tags_perspective_skew(calibration_env) -> None:
+    from app.services.work_area import _classify_corner_tags, derive_work_area_from_detections
+
+    centers = {
+        0: (100.0, 650.0),
+        1: (900.0, 400.0),
+        2: (100.0, 150.0),
+        3: (850.0, 200.0),
+    }
+    center_arrays = {tag_id: np.array(point, dtype=np.float64) for tag_id, point in centers.items()}
+    roles = _classify_corner_tags(0, center_arrays)
+    assert roles == {"origin": 0, "br": 1, "tl": 2, "tr": 3}
+
+    detections = _detections_from_centers(centers)
+    derived = derive_work_area_from_detections(
+        detections,
+        origin_tag_id=0,
+        size_mm=30,
+        tag_ids=[0, 1, 2, 3],
+    )
+    br = next(spec for spec in derived.tag_specs if spec.id == 1)
+    assert br.x_mm == pytest.approx(derived.work_area.width_mm, abs=5)
+    assert br.y_mm == pytest.approx(0, abs=0.1)
+    assert derived.work_area.width_mm > 0
+    assert derived.work_area.height_mm > 0
 
 
 def test_calibrate_corner_defined_mode(calibration_env, monkeypatch) -> None:

@@ -9,6 +9,7 @@ from app.config import get_config_store
 from app.schemas.calibration import (
     AprilTagCalibrationRequest,
     AprilTagPdfRequest,
+    AprilTagPngRequest,
     CalibrationResult,
     CalibrationStatusResponse,
     DistortionSummary,
@@ -17,6 +18,7 @@ from app.schemas.calibration import (
     WorkAreaSummary,
 )
 from app.services.apriltag_pdf_service import generate_apriltag_pdf
+from app.services.apriltag_png_service import generate_apriltag_png
 from app.services.apriltag_service import get_apriltag_service
 from app.services.calibration_service import CalibrationError, CalibrationService, get_calibration_service
 from app.services.camera_intrinsics import resolve_camera_intrinsics, undistort_points
@@ -217,7 +219,6 @@ def calibration_debug_image(
     frame = camera.capture_frame()
     jpeg = get_debug_renderer().render(
         frame,
-        detections=None,
         draw_tags=True,
         draw_grid=True,
         draw_side_lengths=True,
@@ -233,5 +234,16 @@ def generate_apriltag_sheet(payload: AprilTagPdfRequest) -> Response:
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/apriltag/generate-png")
+def generate_apriltag_png_file(payload: AprilTagPngRequest) -> Response:
+    png_bytes = generate_apriltag_png(payload)
+    filename = f"apriltag_{payload.tag_id}_{payload.size_mm:g}mm.png"
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

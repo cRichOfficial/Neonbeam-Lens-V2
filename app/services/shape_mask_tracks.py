@@ -1,4 +1,4 @@
-"""Background subtract track for FastSAM post-filter on dark-on-white bed."""
+"""Background subtract tracks for FastSAM post-filter (intensity, texture, fused)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-from app.services.shape_detector import ShapeDetectorConfig
+from app.services.shape_detector import BgSubtractMode, ShapeDetectorConfig
 
 
 def _morph_kernel(size_px: int) -> np.ndarray:
@@ -111,12 +111,106 @@ def _apply_glare_exclusion_to_diff(
     return cleaned
 
 
+def _l_channel(bgr: np.ndarray) -> np.ndarray:
+    return cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)[:, :, 0]
+
+
+def _gradient_magnitude(l_channel: np.ndarray) -> np.ndarray:
+    grad_x = cv2.Scharr(l_channel, cv2.CV_32F, 1, 0)
+    grad_y = cv2.Scharr(l_channel, cv2.CV_32F, 0, 1)
+    magnitude = cv2.magnitude(grad_x, grad_y)
+    return np.clip(magnitude, 0, 255).astype(np.uint8)
+
+
+def _laplacian_abs(l_channel: np.ndarray) -> np.ndarray:
+    laplacian = cv2.Laplacian(l_channel, cv2.CV_16S, ksize=3)
+    return cv2.convertScaleAbs(laplacian)
+
+
+def compute_intensity_diff(
+    bgr: np.ndarray,
+    reference_bgr: np.ndarray,
+    cfg: ShapeDetectorConfig,
+    *,
+    bed_l: float,
+) -> np.ndarray:
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    ref_gray = cv2.cvtColor(reference_bgr, cv2.COLOR_BGR2GRAY)
+    diff = cv2.absdiff(gray, ref_gray)
+    k = max(3, int(cfg.bg_subtract_blur_kernel_px) | 1)
+    diff = cv2.GaussianBlur(diff, (k, k), 0)
+    return _apply_glare_exclusion_to_diff(diff, bgr, reference_bgr, cfg, bed_l)
+
+
+def compute_texture_diff(
+    bgr: np.ndarray,
+    reference_bgr: np.ndarray,
+    cfg: ShapeDetectorConfig,
+) -> np.ndarray:
+    l_current = _l_channel(bgr)
+    l_reference = _l_channel(reference_bgr)
+    grad_diff = cv2.absdiff(_gradient_magnitude(l_current), _gradient_magnitude(l_reference))
+    lap_diff = cv2.absdiff(_laplacian_abs(l_current), _laplacian_abs(l_reference))
+    diff = cv2.max(grad_diff, lap_diff)
+    k = max(3, int(cfg.bg_texture_blur_kernel_px) | 1)
+    return cv2.GaussianBlur(diff, (k, k), 0)
+
+
+def compute_combined_diff(
+    bgr: np.ndarray,
+    reference_bgr: np.ndarray,
+    cfg: ShapeDetectorConfig,
+    *,
+    mode: BgSubtractMode,
+    bed_l: float,
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Return (combined diff for thresholding, texture-only diff for debug or None)."""
+    texture_diff: np.ndarray | None = None
+    if mode == "intensity":
+        return compute_intensity_diff(bgr, reference_bgr, cfg, bed_l=bed_l), None
+    if mode == "texture":
+        texture_diff = compute_texture_diff(bgr, reference_bgr, cfg)
+        return texture_diff, texture_diff
+    intensity_diff = compute_intensity_diff(bgr, reference_bgr, cfg, bed_l=bed_l)
+    texture_diff = compute_texture_diff(bgr, reference_bgr, cfg)
+    return cv2.max(intensity_diff, texture_diff), texture_diff
+
+
+def _diff_to_binary_mask(
+    diff: np.ndarray,
+    cfg: ShapeDetectorConfig,
+    *,
+    floor: int,
+) -> np.ndarray:
+    _, otsu = cv2.threshold(diff, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    _, fixed = cv2.threshold(diff, floor, 255, cv2.THRESH_BINARY)
+    return cv2.bitwise_or(otsu, fixed)
+
+
 @dataclass(frozen=True)
 class TrackMask:
     name: str
     mask: np.ndarray
     component_count: int
     fragmentation: float
+    mode: str = "intensity"
+    texture_diff: np.ndarray | None = None
+
+
+def split_foreground_components(mask: np.ndarray, min_area_px: int) -> list[np.ndarray]:
+    """Split a binary foreground mask into per-component masks."""
+    if mask.size == 0 or np.count_nonzero(mask) == 0:
+        return []
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    components: list[np.ndarray] = []
+    for label in range(1, num_labels):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        if area < min_area_px:
+            continue
+        component = np.zeros_like(mask)
+        component[labels == label] = 255
+        components.append(component)
+    return components
 
 
 def track_bg_subtract(
@@ -126,24 +220,29 @@ def track_bg_subtract(
     *,
     pixels_per_mm: float,
     bed_l: float,
+    mode: BgSubtractMode | None = None,
 ) -> TrackMask | None:
     if reference_bgr.shape[:2] != bgr.shape[:2]:
         return None
 
+    subtract_mode = mode or cfg.bg_subtract_mode
     min_component_area_px = int(cfg.mask_min_component_area_mm2 * pixels_per_mm * pixels_per_mm)
-    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-    ref_gray = cv2.cvtColor(reference_bgr, cv2.COLOR_BGR2GRAY)
-    diff = cv2.absdiff(gray, ref_gray)
+    diff, texture_diff = compute_combined_diff(
+        bgr,
+        reference_bgr,
+        cfg,
+        mode=subtract_mode,
+        bed_l=bed_l,
+    )
 
-    k = max(3, int(cfg.bg_subtract_blur_kernel_px) | 1)
-    diff = cv2.GaussianBlur(diff, (k, k), 0)
-    diff = _apply_glare_exclusion_to_diff(diff, bgr, reference_bgr, cfg, bed_l)
+    if subtract_mode == "texture":
+        floor = int(cfg.bg_texture_min_diff)
+    elif subtract_mode == "fused":
+        floor = min(int(cfg.bg_subtract_min_diff), int(cfg.bg_texture_min_diff))
+    else:
+        floor = int(cfg.bg_subtract_min_diff)
 
-    _, otsu = cv2.threshold(diff, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    floor = int(cfg.bg_subtract_min_diff)
-    _, fixed = cv2.threshold(diff, floor, 255, cv2.THRESH_BINARY)
-    raw = cv2.bitwise_or(otsu, fixed)
-
+    raw = _diff_to_binary_mask(diff, cfg, floor=floor)
     cleaned = _clean_mask(raw, cfg, min_component_area_px)
     _, count, frag = _mask_score(
         cleaned,
@@ -153,4 +252,11 @@ def track_bg_subtract(
     )
     if np.count_nonzero(cleaned) == 0:
         return None
-    return TrackMask(name="bg_subtract", mask=cleaned, component_count=count, fragmentation=frag)
+    return TrackMask(
+        name="bg_subtract",
+        mask=cleaned,
+        component_count=count,
+        fragmentation=frag,
+        mode=subtract_mode,
+        texture_diff=texture_diff,
+    )

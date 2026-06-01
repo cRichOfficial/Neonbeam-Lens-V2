@@ -5,10 +5,14 @@ from __future__ import annotations
 import threading
 import time
 
+import cv2
+import numpy as np
+
 from app.config import get_config_store
 from app.services.camera_service import (
     MockCameraBackend,
     StreamingOutput,
+    _encode_jpeg_rgb,
     controls_for_manual_exposure,
     iter_streaming_output_frames,
 )
@@ -66,3 +70,26 @@ def test_mock_preview_stream_produces_distinct_frames() -> None:
     finally:
         backend.stop()
     assert frames[0] != frames[1]
+
+
+def test_encode_jpeg_preserves_red_channel() -> None:
+    frame = np.zeros((32, 32, 3), dtype=np.uint8)
+    frame[:, :] = (255, 0, 0)
+    jpeg = _encode_jpeg_rgb(frame, quality=90)
+    decoded = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+    assert decoded is not None
+    b, _g, r = decoded[16, 16]
+    assert r > b
+    assert r > 200
+
+
+def test_mock_main_stream_produces_decodable_jpeg() -> None:
+    backend = MockCameraBackend(get_config_store())
+    backend.start()
+    try:
+        jpeg = next(backend.iter_main_mjpeg_frames())
+    finally:
+        backend.stop()
+    decoded = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+    assert decoded is not None
+    assert decoded.ndim == 3

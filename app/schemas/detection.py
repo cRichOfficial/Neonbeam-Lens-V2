@@ -12,6 +12,7 @@ DebugStage = Literal[
     "raw",
     "warp",
     "bg_diff",
+    "texture_diff",
     "bg_subtract",
     "fastsam",
     "fastsam_filtered",

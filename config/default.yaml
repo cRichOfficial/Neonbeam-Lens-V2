@@ -30,6 +30,10 @@ apriltag:
   pdf_page_margin_mm: 10.0
   quad_decimate: 1.0
 detection:
+  bed_surface: honeycomb
+  bg_subtract_mode: fused
+  bg_texture_min_diff: 12
+  bg_texture_blur_kernel_px: 5
   fastsam_model_path: ~/object-detection-v2/models/fast_sam_s.hef
   fastsam_fallback_model: /usr/share/hailo-models/fast_sam_s.hef
   min_confidence: 0.35
@@ -63,7 +67,7 @@ detection:
   fastsam_hailo_nms_iou: 0.45
   fastsam_hailo_mask_threshold: 0.5
   fastsam_bg_filter_enabled: true
-  fastsam_bg_filter_min_overlap: 0.25
+  fastsam_bg_filter_min_overlap: 0.15
   fastsam_bg_filter_max_fg_ratio: 0.45
   fastsam_min_mask_area_px: 800
   use_background_reference: true

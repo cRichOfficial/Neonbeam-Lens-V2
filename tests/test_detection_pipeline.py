@@ -331,6 +331,81 @@ def test_shape_pipeline_empty_fastsam(monkeypatch) -> None:
     assert jpeg.startswith(b"\xff\xd8")
 
 
+def test_pipeline_texture_fallback_when_fastsam_empty(monkeypatch) -> None:
+    from app.config import AppConfig, ConfigStore, DetectionConfig
+    from app.services import work_area_background as bg_module
+    from app.services import work_area_renderer as war_module
+    from app.services.work_area_background import WorkAreaBackgroundStore
+    from tests.test_shape_mask_tracks import (
+        _place_same_color_object,
+        _synthetic_honeycomb_bed,
+    )
+
+    ppm = 2.0
+    width_px = height_px = 800
+    reference = _synthetic_honeycomb_bed(width_px, height_px)
+    current = _place_same_color_object(reference, size_px=200)
+
+    store = ConfigStore(
+        settings=type("S", (), {"config_path": __import__("pathlib").Path("/nonexistent.yaml")})()
+    )
+    store._config = AppConfig(
+        detection=DetectionConfig(
+            bed_surface="honeycomb",
+            bg_subtract_mode="fused",
+            bg_texture_min_diff=8,
+            use_background_reference=True,
+            min_area_mm2=100.0,
+        )
+    )
+    monkeypatch.setattr("app.config.get_config_store", lambda: store)
+    monkeypatch.setattr("app.services.shape_pipeline.get_config_store", lambda: store)
+
+    class _Store:
+        def load_for_view(self, view, *, max_edge_px):
+            return reference.copy(), None
+
+        def load_image(self):
+            return reference.copy()
+
+        render_diff = staticmethod(WorkAreaBackgroundStore.render_diff)
+
+    monkeypatch.setattr(bg_module, "get_work_area_background_store", lambda: _Store())
+    monkeypatch.setattr("app.services.shape_pipeline.get_work_area_background_store", lambda: _Store())
+
+    def _fake_render(self, frame, *, pixels_per_mm=None, max_edge_px=1024):
+        return war_module.WorkAreaView(
+            image=current,
+            width_mm=400.0,
+            height_mm=400.0,
+            width_px=width_px,
+            height_px=height_px,
+            pixels_per_mm=ppm,
+            origin_tag_id=0,
+        )
+
+    monkeypatch.setattr(war_module.WorkAreaRenderer, "render", _fake_render)
+
+    class _FastSam:
+        def segment_masks(self, frame):
+            return []
+
+        @property
+        def active_device(self):
+            return None
+
+        def get_status(self):
+            return {"loaded": False, "last_error": "not loaded"}
+
+    pipeline = ShapePipeline(fastsam=_FastSam())
+    result = pipeline.run(np.zeros((1000, 1000, 3), dtype=np.uint8))
+    assert result.response.count >= 1
+    assert result.response.backend == "texture_fallback"
+    assert "texture_fallback" in (result.response.fastsam_filter_detail or "")
+    assert "texture_diff" in result.stages
+    assert "bg_subtract" in result.stages
+
+
 def test_final_stage_show_center_coords() -> None:
     from app.schemas.common import BoundingBox, Point2D
     from app.schemas.detection import DetectionItem

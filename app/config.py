@@ -59,7 +59,15 @@ class ApriltagConfig(BaseModel):
     quad_decimate: float = 1.0
 
 
+BedSurfaceKind = Literal["honeycomb", "white_paint"]
+BgSubtractMode = Literal["intensity", "texture", "fused"]
+
+
 class DetectionConfig(BaseModel):
+    bed_surface: BedSurfaceKind = "honeycomb"
+    bg_subtract_mode: BgSubtractMode = "fused"
+    bg_texture_min_diff: int = 12
+    bg_texture_blur_kernel_px: int = 5
     fastsam_model_path: str = "~/object-detection-v2/models/fast_sam_s.hef"
     fastsam_fallback_model: str = "/usr/share/hailo-models/fast_sam_s.hef"
     min_confidence: float = 0.35
@@ -112,6 +120,11 @@ class DetectionConfig(BaseModel):
     @property
     def resolved_background_storage_path(self) -> Path:
         return expand_path(self.background_storage_path)
+
+    def effective_bg_subtract_mode(self) -> BgSubtractMode:
+        if self.bed_surface == "white_paint" and self.bg_subtract_mode == "fused":
+            return "intensity"
+        return self.bg_subtract_mode
 
 
 class ParallaxConfig(BaseModel):

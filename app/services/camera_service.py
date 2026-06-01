@@ -162,10 +162,7 @@ class MockCameraBackend(CameraBackend):
 
     def capture_jpeg(self) -> bytes:
         frame = self.capture_frame()
-        ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
-        if not ok:
-            raise RuntimeError("Failed to encode mock JPEG")
-        return encoded.tobytes()
+        return _encode_jpeg_rgb(frame, 90)
 
     def set_controls(self, exposure_us: int | None, analogue_gain: float | None) -> None:
         if exposure_us is not None:
@@ -281,9 +278,17 @@ class Picamera2Backend(CameraBackend):
             return cv2.cvtColor(frame, cv2.COLOR_RGBA2RGB)
         return frame
 
+    def _capture_main_jpeg(self, quality: int) -> bytes:
+        if self._picam2 is None:
+            raise RuntimeError("Camera not started")
+        with self._io_lock:
+            image = self._picam2.capture_image("main")
+        buf = io.BytesIO()
+        image.save(buf, format="JPEG", quality=quality)
+        return buf.getvalue()
+
     def capture_jpeg(self) -> bytes:
-        frame = self.capture_frame()
-        return _encode_jpeg_rgb(frame, 90)
+        return self._capture_main_jpeg(90)
 
     def set_controls(self, exposure_us: int | None, analogue_gain: float | None) -> None:
         if self._picam2 is None:
@@ -319,8 +324,7 @@ class Picamera2Backend(CameraBackend):
         cfg = self.config_store.config.camera
         interval = 1.0 / cfg.stream_max_fps
         while self._started:
-            frame = self.capture_frame()
-            yield _encode_jpeg_rgb(frame, cfg.stream_jpeg_quality)
+            yield self._capture_main_jpeg(cfg.stream_jpeg_quality)
             time.sleep(interval)
 
 

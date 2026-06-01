@@ -171,6 +171,7 @@ For manual testing, stop the service first (`sudo systemctl stop laser-detection
 | POST | `/api/v1/calibration/apriltag/preview` | Tag detection preview image |
 | GET | `/api/v1/calibration/apriltag/debug-image` | Calibrated grid + tags overlay with side lengths (no object detection) |
 | POST | `/api/v1/calibration/apriltag/generate-pdf` | Print-ready AprilTag sheet |
+| POST | `/api/v1/calibration/apriltag/generate-png` | Single-tag PNG download at 300 DPI (`tag_id`, `size_mm`, `safe_zone_mm` default 2) |
 | GET | `/api/v1/detection/detect` | FastSAM detection (mm geometry + segmentation; query params) |
 | POST | `/api/v1/detection/capture-background` | Save empty-bed background reference (requires calibration) |
 | GET | `/api/v1/detection/background/status` | Background reference present / stale status |
@@ -247,7 +248,7 @@ camera:
 
 ## Detection (FastSAM)
 
-Requires calibration with a derived `work_area`. Detects flat geometric workpieces (coasters, cards, bracelets) on a **white painted bed with dark/black parts**.
+Requires calibration with a derived `work_area`. Detects flat geometric workpieces (coasters, cards, bracelets) on the laser bed. Default config targets a **black honeycomb bed with black/dark parts** (same-color detection via texture background subtraction). Set `detection.bed_surface: white_paint` for a **white painted bed with dark/black parts** (intensity-only bg subtract).
 
 `GET /api/v1/detection/detect` returns per-object geometry in **bed millimeters**: `bbox_mm`, `width_mm`, `height_mm`, `rotation_deg`, `oriented_box_mm`, `segmentation_polygon_mm`. Query params:
 
@@ -262,9 +263,12 @@ Response includes `fastsam_used`, `fastsam_device`, `fastsam_filter_detail`, `ba
 ### Pipeline architecture
 
 ```
-warp → bg_subtract (foreground hint) → FastSAM (Hailo or CPU)
+warp → bg_subtract (intensity and/or texture diff) → FastSAM (Hailo or CPU)
      → post-filter masks (min area + bg overlap) → geometry → DetectionResponse
+     → (if FastSAM empty) texture-mask fallback from bg_subtract blobs
 ```
+
+The bg step compares the current warped frame to a stored **empty-bed reference**. On honeycomb (`bed_surface: honeycomb`, `bg_subtract_mode: fused`), **texture diff** (gradient + Laplacian on LAB L) detects parts that occlude the cell pattern even when color matches the bed. FastSAM still runs afterward to refine boundaries; if it returns no usable masks, foreground blobs from bg_subtract drive geometry directly (`backend: texture_fallback`).
 
 The bg post-filter drops corner-tag speckles and masks outside bg_subtract foreground. If bg_subtract covers more than ~45% of the frame (stale reference or overexposure), the filter auto-disables and raw FastSAM masks are used.
 
@@ -277,10 +281,10 @@ The bg post-filter drops corner-tag speckles and masks outside bg_subtract foreg
 
 For `stage=all`, the mosaic includes only stages active on **this run** (minimum: `raw → warp → fastsam → final`). Optional tiles:
 
-- **bg_diff** / **bg_subtract** — when a stored background reference exists and is used
+- **bg_diff** / **texture_diff** / **bg_subtract** — when a stored background reference exists and is used (`texture_diff` for `texture` or `fused` modes)
 - **fastsam_filtered** — when FastSAM returns masks and filtering keeps at least one
 
-The **bg_diff** tile is grayscale `|current − reference|` on the warped work area (black = no change; bright = pixel difference). Recapture the empty-bed reference if an empty bed is not mostly black.
+The **bg_diff** tile is grayscale intensity `|current − reference|` on the warped work area (black = no change). **texture_diff** shows gradient/Laplacian change (bright = honeycomb pattern disrupted). Recapture the empty-bed reference after moving the honeycomb, changing lighting, or recalibrating.
 
 **fastsam** shows raw FastSAM masks; **fastsam_filtered** shows masks after bg overlap and minimum-area filtering; **final** shows detected geometry with mm labels. Set `show_center_coords=true` on the debug-image request to draw a crosshair and `center x, y mm` label on each object in the **final** tile (bed coordinates, bottom-left origin, Y-up).
 
@@ -306,10 +310,13 @@ Or watch uvicorn stdout if running manually. Use these lines to see whether real
 
 ### Empty-bed background reference
 
-After repainting the bed white, **recapture** an empty-bed reference — a stale dark-bed reference will poison `bg_subtract`:
+**Honeycomb (default):** clear the bed, then capture an empty honeycomb reference:
 
-1. Clear the bed, then either `POST /api/v1/calibration/apriltag` with `"capture_empty_background": true`, or `POST /api/v1/detection/capture-background`.
-2. Place dark workpieces and run `GET /api/v1/detection/detect` or `GET .../debug-image?stage=all`.
+1. `POST /api/v1/calibration/apriltag` with `"capture_empty_background": true`, or `POST /api/v1/detection/capture-background`.
+2. Place parts on the bed and run `GET /api/v1/detection/detect` or `GET .../debug-image?stage=all`.
+3. In the mosaic, confirm **texture_diff** and **bg_subtract** light up over each part; **final** should show mm labels (via FastSAM or texture fallback).
+
+**White painted bed:** set `bed_surface: white_paint` in config (uses intensity-only bg subtract). Recapture after repainting — a stale reference will poison bg_subtract.
 
 bg_subtract subtracts the stored warp against the current frame. Recapture when lighting, bed surface, camera position, or calibration scale changes — `GET .../background/status` reports `stale_reason` when metadata no longer matches.
 
@@ -329,9 +336,12 @@ White bed paint clips easily. Target **20–40 ms** exposure for preview and det
 
 | Key | Purpose |
 |-----|---------|
-| `bg_subtract_min_diff` / `bg_subtract_blur_kernel_px` | Diff floor and blur before threshold (bg post-filter) |
+| `bed_surface` | `honeycomb` (default) or `white_paint` — preset for bg subtract behavior |
+| `bg_subtract_mode` | `intensity`, `texture`, or `fused` (default for honeycomb: `fused`) |
+| `bg_texture_min_diff` / `bg_texture_blur_kernel_px` | Texture diff floor and blur (honeycomb / black-on-black) |
+| `bg_subtract_min_diff` / `bg_subtract_blur_kernel_px` | Intensity diff floor and blur |
 | `fastsam_bg_filter_enabled` | Post-filter FastSAM masks by bg_subtract overlap |
-| `fastsam_bg_filter_min_overlap` | Min fraction of mask pixels inside bg foreground (default 0.25) |
+| `fastsam_bg_filter_min_overlap` | Min fraction of mask pixels inside bg foreground (default 0.15 honeycomb, raise for white bed) |
 | `fastsam_bg_filter_max_fg_ratio` | Skip bg filter when foreground exceeds this fraction of frame |
 | `fastsam_min_mask_area_px` | Drop tiny FastSAM speckle masks (default 800 px) |
 | `mask_morph_kernel_px` | Morphological close kernel for mask cleanup |
@@ -364,12 +374,17 @@ Debug mosaic: `GET .../detection/debug-image?stage=all`
 
 ## Work surface prep
 
-**White painted bed + dark/black workpieces** is the default detection scenario. Recapture the empty-bed background after any repaint or surface change.
+**Honeycomb bed + dark/black workpieces (default)** — parts sit on top of the cells; detection uses pattern occlusion (texture diff), not color contrast. Capture an empty-bed background with the honeycomb in place before detecting.
+
+- Keep the honeycomb fixed after background capture; recapture if it moves
+- Tune `bg_texture_min_diff` using `debug-image?stage=all` if parts are missed or noise is high
+- AprilTags at corners define the ROI
+
+**White painted bed + dark/black workpieces** — set `bed_surface: white_paint` in config. Recapture the empty-bed background after any repaint or surface change.
 
 - Target matte white paint; avoid glossy finish that creates specular hotspots
 - **Angled LED bar**: rim-light edges help segmentation find part outlines
 - Keep exposure short (20–40 ms) to avoid clipping white paint
-- AprilTags at corners define the ROI; optional tape border inside tags for clipping only
 - **Do not use a checkerboard pattern** on the bed — it creates false contours
 
 ## Configuration

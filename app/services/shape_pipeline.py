@@ -12,7 +12,12 @@ from app.schemas.detection import DetectionItem, DetectionResponse, WorkAreaSumm
 from app.services.fastsam_detector import FastSamDetector, get_fastsam_detector
 from app.services.pipeline_debug_mosaic import compose_stage_mosaic, encode_jpeg, put_text_outlined
 from app.services.shape_detector import RawShapeDetection, ShapeDetector, ShapeDetectorConfig
-from app.services.shape_fastsam_filter import extract_bg_subtract_mask, filter_fastsam_masks
+from app.services.shape_fastsam_filter import (
+    extract_bg_subtract_mask,
+    filter_fastsam_masks,
+    is_bg_mask_sane,
+)
+from app.services.shape_mask_tracks import split_foreground_components, track_bg_subtract
 from app.services.work_area_background import get_work_area_background_store
 from app.services.work_area_renderer import (
     WorkAreaRenderer,
@@ -71,8 +76,11 @@ class ShapePipeline:
             glare_l_delta=cfg.glare_l_delta,
             glare_l_absolute_min=cfg.glare_l_absolute_min,
             use_background_reference=use_bg,
+            bg_subtract_mode=cfg.effective_bg_subtract_mode(),
             bg_subtract_min_diff=cfg.bg_subtract_min_diff,
             bg_subtract_blur_kernel_px=cfg.bg_subtract_blur_kernel_px,
+            bg_texture_min_diff=cfg.bg_texture_min_diff,
+            bg_texture_blur_kernel_px=cfg.bg_texture_blur_kernel_px,
         )
 
     def run(
@@ -119,6 +127,7 @@ class ShapePipeline:
 
         bg_mask: np.ndarray | None = None
         bg_track = None
+        texture_diff: np.ndarray | None = None
         if background_reference_used and reference_bgr is not None:
             bg_mask = extract_bg_subtract_mask(
                 view.image,
@@ -126,7 +135,6 @@ class ShapePipeline:
                 detector_cfg,
                 pixels_per_mm=view.pixels_per_mm,
             )
-            from app.services.shape_mask_tracks import track_bg_subtract
             from app.services.shape_detector import _estimate_bed_l
 
             margin_px = int(detector_cfg.roi_margin_mm * view.pixels_per_mm)
@@ -145,9 +153,13 @@ class ShapePipeline:
                 detector_cfg,
                 pixels_per_mm=view.pixels_per_mm,
                 bed_l=bed_l,
+                mode=detector_cfg.bg_subtract_mode,
             )
+            if bg_track is not None:
+                texture_diff = bg_track.texture_diff
 
         fastsam_used = False
+        texture_fallback_used = False
         fastsam_device: str | None = None
         fastsam_error: str | None = None
         raw_fastsam_masks: list[np.ndarray] = []
@@ -214,13 +226,48 @@ class ShapePipeline:
                     nested = cpu_err
                 fastsam_error = nested or "FastSAM not loaded"
 
+        if not fastsam_objects and bg_mask is not None and is_bg_mask_sane(
+            bg_mask,
+            max_foreground_ratio=cfg.fastsam_bg_filter_max_fg_ratio,
+        ):
+            min_component_area_px = int(
+                detector_cfg.mask_min_component_area_mm2 * view.pixels_per_mm * view.pixels_per_mm
+            )
+            component_masks = split_foreground_components(bg_mask, min_component_area_px)
+            for comp_index, comp_mask in enumerate(component_masks):
+                per_mask = ShapeDetector.from_mask(
+                    view.image,
+                    comp_mask,
+                    pixels_per_mm=view.pixels_per_mm,
+                    width_mm=view.width_mm,
+                    height_mm=view.height_mm,
+                    config=detector_cfg,
+                )
+                logger.info(
+                    "[fastsam] texture_fallback comp[%d] objects=%d",
+                    comp_index,
+                    len(per_mask.objects),
+                )
+                fastsam_objects.extend(per_mask.objects)
+            if fastsam_objects:
+                texture_fallback_used = True
+                fallback_note = f"texture_fallback {len(component_masks)} blob(s)"
+                fastsam_filter_detail = (
+                    f"{fastsam_filter_detail}; {fallback_note}".strip("; ")
+                    if fastsam_filter_detail
+                    else fallback_note
+                )
+
         objects = [obj for obj in fastsam_objects if obj.confidence >= threshold]
         detections = [
             self._to_detection_item(index, raw, view, include_work_area_coords=include_work_area_coords)
             for index, raw in enumerate(objects)
         ]
 
-        backend_name = fastsam_device or "none"
+        if texture_fallback_used:
+            backend_name = "texture_fallback"
+        else:
+            backend_name = fastsam_device or "none"
         response = DetectionResponse(
             backend=backend_name,
             calibrated=True,
@@ -247,6 +294,7 @@ class ShapePipeline:
             detections=detections,
             bg_track=bg_track,
             bg_mask=bg_mask,
+            texture_diff=texture_diff,
             raw_fastsam_masks=raw_fastsam_masks,
             filtered_fastsam_masks=filtered_fastsam_masks,
             fastsam_filter_detail=fastsam_filter_detail,
@@ -266,6 +314,7 @@ class ShapePipeline:
         detections: list[DetectionItem],
         bg_track,
         bg_mask: np.ndarray | None,
+        texture_diff: np.ndarray | None,
         raw_fastsam_masks: list[np.ndarray],
         filtered_fastsam_masks: list[np.ndarray],
         fastsam_filter_detail: str,
@@ -287,6 +336,10 @@ class ShapePipeline:
             stages["bg_diff"] = background_store.render_diff(view.image, ref_image)
             order.append("bg_diff")
 
+        if texture_diff is not None:
+            stages["texture_diff"] = self._render_diff_stage(texture_diff, "texture_diff")
+            order.append("texture_diff")
+
         if bg_track is not None:
             stages["bg_subtract"] = self._render_mask_stage(
                 view.image,
@@ -294,6 +347,7 @@ class ShapePipeline:
                 bg_track.name,
                 component_count=bg_track.component_count,
                 fragmentation=bg_track.fragmentation,
+                label_prefix=f"mask:{bg_track.mode}",
             )
         elif bg_mask is not None and np.count_nonzero(bg_mask) > 0:
             stages["bg_subtract"] = self._render_mask_stage(view.image, bg_mask, "bg_subtract")
@@ -416,6 +470,22 @@ class ShapePipeline:
         label = f"{label_prefix}:{method} comps={component_count} frag={fragmentation:.2f}"
         put_text_outlined(blended, label, (10, 24), font_scale=0.55, thickness=2)
         return blended
+
+    def _render_diff_stage(self, diff: np.ndarray, label: str) -> np.ndarray:
+        if diff.ndim == 3:
+            gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = diff
+        output = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        max_val = int(np.max(gray)) if gray.size else 0
+        put_text_outlined(
+            output,
+            f"{label} max={max_val} (bright=change)",
+            (10, 24),
+            font_scale=0.55,
+            thickness=2,
+        )
+        return output
 
     def _render_final_stage(
         self,

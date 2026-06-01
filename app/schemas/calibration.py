@@ -113,3 +113,10 @@ class AprilTagPdfRequest(BaseModel):
     size_mm: float = Field(gt=0, description="Physical tag edge length in mm")
     safe_zone_padding_mm: float = Field(default=5.0, ge=0)
     family: Literal["tag36h11"] = "tag36h11"
+
+
+class AprilTagPngRequest(BaseModel):
+    tag_id: int = Field(ge=0, description="tag36h11 marker ID (0–586)")
+    size_mm: float = Field(gt=0, description="Physical black square edge length in mm")
+    safe_zone_mm: float = Field(default=2.0, ge=0, description="White padding on each side of the tag in mm")
+    family: Literal["tag36h11"] = "tag36h11"
