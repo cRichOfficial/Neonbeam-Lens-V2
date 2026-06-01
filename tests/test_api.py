@@ -76,7 +76,15 @@ def test_calibration_status(client: TestClient) -> None:
     assert data["calibrated"] is False
 
 
-def test_apriltag_preview(client: TestClient) -> None:
+def test_apriltag_preview(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    class MockAprilTagService:
+        def detect(self, frame, family=None):
+            return []
+
+        def draw_detections(self, frame, tags, label_corners=True):
+            return frame.copy()
+
+    monkeypatch.setattr("app.api.calibration.get_apriltag_service", MockAprilTagService)
     response = client.post("/api/v1/calibration/apriltag/preview")
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/jpeg"

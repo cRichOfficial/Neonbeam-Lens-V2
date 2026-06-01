@@ -43,6 +43,28 @@ class DetectedAprilTag(BaseModel):
     corners_px: list[list[float]]
 
 
+class AprilTagDetectionItem(BaseModel):
+    id: int
+    center_px: list[float]
+    corners_px: list[list[float]]
+    hamming: int
+    decision_margin: float
+
+
+class AprilTagDetectionsResponse(BaseModel):
+    detections: list[AprilTagDetectionItem]
+    detected_ids: list[int]
+    expected_ids: list[int]
+    missing_ids: list[int]
+    exposure_ms: float
+    exposure_ms_actual: float | None = None
+    frame_size: list[int]
+    camera_mode: str = ""
+    preprocess: str = "multi"
+    frame_stats: dict[str, float | int] = Field(default_factory=dict)
+    hint: str | None = None
+
+
 class DistortionSummary(BaseModel):
     distortion_model: str = "pinhole"
     hfov_deg: float = 0.0

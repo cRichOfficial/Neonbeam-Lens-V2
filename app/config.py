@@ -50,6 +50,9 @@ class CameraConfig(BaseModel):
     intrinsics_override: CameraIntrinsicsOverride = Field(default_factory=CameraIntrinsicsOverride)
 
 
+ApriltagPreprocess = Literal["none", "clahe", "multi"]
+
+
 class ApriltagConfig(BaseModel):
     family: str = "tag36h11"
     default_size_mm: float = 20
@@ -57,6 +60,10 @@ class ApriltagConfig(BaseModel):
     pdf_page_size: str = "letter"
     pdf_page_margin_mm: float = 10
     quad_decimate: float = 1.0
+    preprocess: ApriltagPreprocess = "multi"
+    decode_sharpening: float = 0.25
+    quad_sigma: float = 0.0
+    aruco_fallback: bool = True
 
 
 BedSurfaceKind = Literal["honeycomb", "white_paint"]

@@ -575,7 +575,42 @@ def test_measure_tag_edge_lengths_mm_synthetic(calibration_env, monkeypatch) -> 
         assert edge_mm == pytest.approx(30, abs=0.5), f"tag {tag_id} measured {edge_mm}"
 
 
-def test_scale_refinement_recovers_inflated_work_area(calibration_env, monkeypatch) -> None:
+def test_calibrate_from_derived_specs_without_scale_refinement(calibration_env, monkeypatch) -> None:
+    from app.services.work_area import derive_work_area_from_detections
+
+    bed = _synthetic_bed(calibration_env.config.bed)
+    bed_to_px = _bed_to_px_homography()
+    detections = _synthetic_detections(STANDARD_TAGS, bed, bed_to_px)
+    derived = derive_work_area_from_detections(
+        detections,
+        origin_tag_id=0,
+        size_mm=30,
+        tag_ids=[0, 1, 2, 3],
+    )
+
+    monkeypatch.setattr(
+        "app.services.calibration_service.get_apriltag_service",
+        lambda: _mock_apriltag_service(detections),
+    )
+
+    service = CalibrationService()
+    frame = np.zeros((1000, 1000, 3), dtype=np.uint8)
+    result, _ = service.calibrate(
+        frame,
+        derived.tag_specs,
+        persist=True,
+        work_area=derived.work_area,
+        mm_per_px_x=derived.mm_per_px_x,
+        mm_per_px_y=derived.mm_per_px_y,
+    )
+
+    assert result.tag_size_validation is not None
+    assert result.tag_size_validation.scale_iterations == 0
+    assert result.work_area.width_mm == pytest.approx(400, abs=5)
+    assert result.work_area.height_mm == pytest.approx(400, abs=5)
+
+
+def test_inflated_input_not_scale_corrected(calibration_env, monkeypatch) -> None:
     from app.services.work_area import WorkArea, derive_work_area_from_detections
 
     bed = _synthetic_bed(calibration_env.config.bed)
@@ -614,10 +649,8 @@ def test_scale_refinement_recovers_inflated_work_area(calibration_env, monkeypat
     )
 
     assert result.tag_size_validation is not None
-    assert result.tag_size_validation.scale_iterations >= 1
-    assert result.tag_size_validation.converged
-    assert result.tag_size_validation.mean_mm == pytest.approx(30, abs=0.5)
-    assert result.work_area.width_mm == pytest.approx(400, abs=5)
+    assert result.tag_size_validation.scale_iterations == 0
+    assert result.work_area.width_mm == pytest.approx(derived.work_area.width_mm * scale, abs=5)
 
 
 def test_derive_work_area_uses_corner_transform(calibration_env) -> None:
@@ -700,7 +733,7 @@ def test_per_axis_derive_with_anisotropic_tag_edges(calibration_env) -> None:
     )
 
 
-def test_anisotropic_refinement_recovers_width_only_inflation(calibration_env, monkeypatch) -> None:
+def test_inflated_width_input_not_scale_corrected(calibration_env, monkeypatch) -> None:
     from app.services.work_area import WorkArea, derive_work_area_from_detections
 
     bed = _synthetic_bed(calibration_env.config.bed)
@@ -746,9 +779,9 @@ def test_anisotropic_refinement_recovers_width_only_inflation(calibration_env, m
     )
 
     assert result.tag_size_validation is not None
-    assert result.tag_size_validation.scale_x_iterations >= 1
-    assert result.tag_size_validation.converged
-    assert result.work_area.width_mm == pytest.approx(400, abs=5)
+    assert result.tag_size_validation.scale_iterations == 0
+    assert result.tag_size_validation.scale_x_iterations == 0
+    assert result.work_area.width_mm == pytest.approx(derived.work_area.width_mm * width_scale, abs=5)
     assert result.work_area.height_mm == pytest.approx(400, abs=5)
 
 
@@ -794,3 +827,173 @@ def test_persisted_work_area_matches_final_homography(calibration_env, monkeypat
     assert result.work_area is not None
     assert result.work_area.width_mm == pytest.approx(expected.width_mm, abs=0.5)
     assert result.work_area.height_mm == pytest.approx(expected.height_mm, abs=0.5)
+
+
+def _shrink_tag_edges(detections: list[dict], scale: float) -> list[dict]:
+    shrunk: list[dict] = []
+    for det in detections:
+        corners = np.array(det["corners_px"], dtype=np.float64)
+        center = corners.mean(axis=0)
+        corners = center + (corners - center) * scale
+        shrunk.append(
+            {
+                **det,
+                "corners_px": corners.tolist(),
+                "center_px": corners.mean(axis=0).tolist(),
+            }
+        )
+    return shrunk
+
+
+def _bed_to_px_homography_200() -> np.ndarray:
+    bed_pts = np.array([[0, 0], [200, 0], [0, 200], [200, 200]], dtype=np.float32)
+    px_pts = np.array([[120, 880], [880, 880], [120, 120], [880, 120]], dtype=np.float32)
+    homography, _ = cv2.findHomography(bed_pts, px_pts, method=0)
+    assert homography is not None
+    return homography
+
+
+TAGS_200 = [
+    AprilTagSpec(id=0, x_mm=0, y_mm=0, size_mm=30),
+    AprilTagSpec(id=1, x_mm=200, y_mm=0, size_mm=30),
+    AprilTagSpec(id=2, x_mm=0, y_mm=200, size_mm=30),
+    AprilTagSpec(id=3, x_mm=200, y_mm=200, size_mm=30),
+]
+
+
+def test_derived_work_area_not_inflated_when_tag_edges_undersized(calibration_env, monkeypatch) -> None:
+    from app.services.work_area import derive_work_area_from_detections
+
+    bed = BedConfig(
+        width_mm=200,
+        height_mm=200,
+        origin=calibration_env.config.bed.origin,
+        y_axis=calibration_env.config.bed.y_axis,
+    )
+    bed_to_px = _bed_to_px_homography_200()
+    detections = _shrink_tag_edges(
+        _synthetic_detections(TAGS_200, bed, bed_to_px),
+        scale=0.93,
+    )
+    derived = derive_work_area_from_detections(
+        detections,
+        origin_tag_id=0,
+        size_mm=30,
+        tag_ids=[0, 1, 2, 3],
+    )
+    expected_width = derived.work_area.width_mm
+    expected_height = derived.work_area.height_mm
+
+    monkeypatch.setattr(
+        "app.services.calibration_service.get_apriltag_service",
+        lambda: _mock_apriltag_service(detections),
+    )
+
+    service = CalibrationService()
+    frame = np.zeros((1000, 1000, 3), dtype=np.uint8)
+    result, _ = service.calibrate(
+        frame,
+        derived.tag_specs,
+        persist=True,
+        work_area=derived.work_area,
+        mm_per_px_x=derived.mm_per_px_x,
+        mm_per_px_y=derived.mm_per_px_y,
+    )
+
+    assert result.work_area is not None
+    assert result.work_area.width_mm == pytest.approx(expected_width, rel=0.02)
+    assert result.work_area.height_mm == pytest.approx(expected_height, rel=0.02)
+    assert result.work_area.width_mm < expected_width * 1.05
+    assert result.tag_size_validation is not None
+    assert result.tag_size_validation.scale_iterations == 0
+
+
+def test_derives_work_area_from_detections(calibration_env) -> None:
+    from app.services.work_area import derive_work_area_from_detections
+
+    bed = _synthetic_bed(calibration_env.config.bed)
+    bed_to_px = _bed_to_px_homography()
+    detections = _synthetic_detections(STANDARD_TAGS, bed, bed_to_px)
+    derived = derive_work_area_from_detections(
+        detections,
+        origin_tag_id=0,
+        size_mm=30,
+        tag_ids=[0, 1, 2, 3],
+    )
+    assert derived.work_area.width_mm == pytest.approx(400, abs=5)
+    assert derived.work_area.height_mm == pytest.approx(400, abs=5)
+
+
+def test_axis_aligned_center_spacing_ignores_skew() -> None:
+    from app.services.work_area import axis_aligned_center_spacing_mm
+
+    centers = {
+        0: np.array([100.0, 800.0]),
+        1: np.array([900.0, 850.0]),
+        2: np.array([110.0, 100.0]),
+        3: np.array([910.0, 150.0]),
+    }
+    width_mm, height_mm = axis_aligned_center_spacing_mm(centers, origin_tag_id=0)
+    assert width_mm == pytest.approx(800.0)
+    assert height_mm == pytest.approx(700.0)
+    euclidean_width = float(np.linalg.norm(centers[1] - centers[0]))
+    assert width_mm != pytest.approx(euclidean_width, abs=1.0)
+
+
+def test_finalize_axis_aligned_spacing(calibration_env, monkeypatch) -> None:
+    from app.services.work_area import (
+        axis_aligned_center_spacing_mm,
+        centers_mm_from_homography,
+        derive_work_area_from_detections,
+        finalize_work_area_from_homography,
+    )
+
+    bed = _synthetic_bed(calibration_env.config.bed)
+    bed_to_px = _bed_to_px_homography()
+    detections = _synthetic_detections(STANDARD_TAGS, bed, bed_to_px)
+    derived = derive_work_area_from_detections(
+        detections,
+        origin_tag_id=0,
+        size_mm=30,
+        tag_ids=[0, 1, 2, 3],
+    )
+
+    monkeypatch.setattr(
+        "app.services.calibration_service.get_apriltag_service",
+        lambda: _mock_apriltag_service(detections),
+    )
+
+    service = CalibrationService()
+    frame = np.zeros((1000, 1000, 3), dtype=np.uint8)
+    result, _ = service.calibrate(
+        frame,
+        derived.tag_specs,
+        persist=True,
+        work_area=derived.work_area,
+        mm_per_px_x=derived.mm_per_px_x,
+        mm_per_px_y=derived.mm_per_px_y,
+    )
+
+    det_by_id = {det["id"]: det for det in detections}
+    spec_by_id = {spec.id: spec for spec in derived.tag_specs}
+    matched = [(det_by_id[tag_id], spec_by_id[tag_id]) for tag_id in [0, 1, 2, 3]]
+    mm_centers = centers_mm_from_homography(matched, result.homography, result.intrinsics)
+    image_centers = {
+        tag_id: np.array(det["center_px"], dtype=np.float64)
+        for det, spec in matched
+        for tag_id in [spec.id]
+    }
+    expected_width, expected_height = axis_aligned_center_spacing_mm(
+        mm_centers,
+        origin_tag_id=0,
+        image_centers=image_centers,
+    )
+    finalized = finalize_work_area_from_homography(
+        matched,
+        result.homography,
+        result.intrinsics,
+        origin_tag_id=0,
+        size_mm=30,
+    )
+    assert finalized.width_mm == pytest.approx(expected_width, abs=0.5)
+    assert finalized.height_mm == pytest.approx(expected_height, abs=0.5)

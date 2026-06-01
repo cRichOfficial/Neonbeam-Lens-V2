@@ -8,6 +8,7 @@ import numpy as np
 from app.schemas.common import Point2D
 from app.schemas.detection import WorkAreaImageInfo
 from app.services.calibration_service import CalibrationService, get_calibration_service
+from app.services.image_encoding import encode_jpeg_rgb
 from app.services.transform_service import TransformService, get_transform_service
 
 
@@ -127,10 +128,7 @@ class WorkAreaRenderer:
         )
 
     def encode_jpeg(self, view: WorkAreaView, quality: int = 85) -> bytes:
-        ok, encoded = cv2.imencode(".jpg", view.image, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
-        if not ok:
-            raise RuntimeError("Failed to encode work area JPEG")
-        return encoded.tobytes()
+        return encode_jpeg_rgb(view.image, quality=quality)
 
 
 _renderer: WorkAreaRenderer | None = None

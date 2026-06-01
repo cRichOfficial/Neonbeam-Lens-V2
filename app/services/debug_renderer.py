@@ -72,6 +72,7 @@ class DebugRenderer:
                     2,
                     cv2.LINE_AA,
                 )
+                y_offset += 28
 
         ok, encoded = cv2.imencode(".jpg", cv2.cvtColor(output, cv2.COLOR_RGB2BGR), [int(cv2.IMWRITE_JPEG_QUALITY), 90])
         if not ok:

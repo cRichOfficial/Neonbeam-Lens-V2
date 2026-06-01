@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
 from app.config import get_config_store
 from app.schemas.calibration import (
     AprilTagCalibrationRequest,
+    AprilTagDetectionItem,
+    AprilTagDetectionsResponse,
     AprilTagPdfRequest,
     AprilTagPngRequest,
     CalibrationResult,
@@ -19,7 +21,7 @@ from app.schemas.calibration import (
 )
 from app.services.apriltag_pdf_service import generate_apriltag_pdf
 from app.services.apriltag_png_service import generate_apriltag_png
-from app.services.apriltag_service import get_apriltag_service
+from app.services.apriltag_service import build_detection_failure_hint, frame_gray_stats, get_apriltag_service
 from app.services.calibration_service import CalibrationError, CalibrationService, get_calibration_service
 from app.services.camera_intrinsics import resolve_camera_intrinsics, undistort_points
 from app.services.camera_service import CameraService, get_camera_service
@@ -29,6 +31,85 @@ from app.services.work_area_background import get_work_area_background_store
 from app.services.work_area_renderer import get_work_area_renderer
 
 router = APIRouter(prefix="/api/v1/calibration", tags=["calibration"])
+
+
+def _tag_detection_error_detail(
+    message: str,
+    detections: list[dict],
+    *,
+    expected_ids: list[int],
+    camera: CameraService,
+) -> dict:
+    detected_ids = sorted({det["id"] for det in detections})
+    missing_ids = [tag_id for tag_id in expected_ids if tag_id not in detected_ids]
+    settings = camera.get_settings()
+    exposure_ms = float(settings["exposure_ms"])
+    exposure_ms_actual = settings.get("exposure_ms_actual")
+    if exposure_ms_actual is not None:
+        exposure_ms_actual = float(exposure_ms_actual)
+    effective_exposure = exposure_ms_actual if exposure_ms_actual is not None else exposure_ms
+    return {
+        "message": message,
+        "detected_ids": detected_ids,
+        "missing_ids": missing_ids,
+        "detection_count": len(detections),
+        "exposure_ms": exposure_ms,
+        "exposure_ms_actual": exposure_ms_actual,
+        "hint": build_detection_failure_hint(
+            detections,
+            expected_ids=expected_ids,
+            exposure_ms=effective_exposure,
+        ),
+    }
+
+
+def _build_detections_response(
+    detections: list[dict],
+    *,
+    expected_ids: list[int],
+    camera: CameraService,
+    frame_size: list[int],
+    frame_stats: dict[str, float | int],
+) -> AprilTagDetectionsResponse:
+    detected_ids = sorted({det["id"] for det in detections})
+    missing_ids = [tag_id for tag_id in expected_ids if tag_id not in detected_ids]
+    settings = camera.get_settings()
+    exposure_ms = float(settings["exposure_ms"])
+    exposure_ms_actual = settings.get("exposure_ms_actual")
+    if exposure_ms_actual is not None:
+        exposure_ms_actual = float(exposure_ms_actual)
+    effective_exposure = exposure_ms_actual if exposure_ms_actual is not None else exposure_ms
+    apriltag_cfg = get_config_store().config.apriltag
+    hint = None
+    if missing_ids:
+        hint = build_detection_failure_hint(
+            detections,
+            expected_ids=expected_ids,
+            exposure_ms=effective_exposure,
+            frame_stats=frame_stats,
+        )
+    return AprilTagDetectionsResponse(
+        detections=[
+            AprilTagDetectionItem(
+                id=det["id"],
+                center_px=det["center_px"],
+                corners_px=det["corners_px"],
+                hamming=det["hamming"],
+                decision_margin=det["decision_margin"],
+            )
+            for det in detections
+        ],
+        detected_ids=detected_ids,
+        expected_ids=expected_ids,
+        missing_ids=missing_ids,
+        exposure_ms=exposure_ms,
+        exposure_ms_actual=exposure_ms_actual,
+        frame_size=frame_size,
+        camera_mode=camera.mode_name(),
+        preprocess=apriltag_cfg.preprocess,
+        frame_stats=frame_stats,
+        hint=hint,
+    )
 
 
 def _work_area_summary(result) -> WorkAreaSummary | None:
@@ -166,7 +247,15 @@ def calibrate_apriltags(
     except CalibrationError as exc:
         raise HTTPException(status_code=400, detail=exc.detail) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
+        raise HTTPException(
+            status_code=400,
+            detail=_tag_detection_error_detail(
+                str(exc),
+                detections,
+                expected_ids=payload.tag_ids,
+                camera=camera,
+            ),
+        ) from exc
 
     distortion = (
         DistortionSummary(**result.intrinsics.summary()) if result.intrinsics else None
@@ -207,6 +296,27 @@ def preview_apriltags(
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to encode preview image")
     return Response(content=encoded.tobytes(), media_type="image/jpeg")
+
+
+@router.get("/apriltag/detections", response_model=AprilTagDetectionsResponse)
+def apriltag_detections(
+    tag_ids: list[int] = Query(
+        default=[0, 1, 2, 3],
+        description="Expected corner tag IDs to compare against detections",
+    ),
+    camera: CameraService = Depends(get_camera_service),
+) -> AprilTagDetectionsResponse:
+    frame = camera.capture_frame()
+    frame_stats = frame_gray_stats(frame)
+    detections = get_apriltag_service().detect(frame)
+    height, width = frame.shape[:2]
+    return _build_detections_response(
+        detections,
+        expected_ids=tag_ids,
+        camera=camera,
+        frame_size=[width, height],
+        frame_stats=frame_stats,
+    )
 
 
 @router.get("/apriltag/debug-image")

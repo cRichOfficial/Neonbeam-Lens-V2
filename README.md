@@ -169,6 +169,7 @@ For manual testing, stop the service first (`sudo systemctl stop laser-detection
 | POST | `/api/v1/calibration/apriltag` | Calibrate from AprilTag specs |
 | GET | `/api/v1/calibration/status` | Calibration status |
 | POST | `/api/v1/calibration/apriltag/preview` | Tag detection preview image |
+| GET | `/api/v1/calibration/apriltag/detections` | JSON tag detections with IDs, margins, exposure, and missing IDs |
 | GET | `/api/v1/calibration/apriltag/debug-image` | Calibrated grid + tags overlay with side lengths (no object detection) |
 | POST | `/api/v1/calibration/apriltag/generate-pdf` | Print-ready AprilTag sheet |
 | POST | `/api/v1/calibration/apriltag/generate-png` | Single-tag PNG download at 300 DPI (`tag_id`, `size_mm`, `safe_zone_mm` default 2) |
@@ -182,12 +183,16 @@ For manual testing, stop the service first (`sudo systemctl stop laser-detection
 
 `exposure_ms` is the configured/saved value. `exposure_ms_actual` (when present) is what the camera hardware applied — they should match after the frame-duration fix below. Long exposures (> ~66 ms) automatically lower the capture frame rate so libcamera is not capped by a fixed 15 fps window.
 
+**AprilTag calibration exposure:** Default `camera.exposure_us` is **30 ms** (30 000 µs) so tag edges stay sharp on a bright bed. Honeycomb detection may need a longer exposure at runtime — raise it with `PUT /api/v1/camera/settings` after calibration, then recapture the empty-bed background if lighting changes. Values above ~100 ms often bloom white surfaces and prevent tag detection entirely.
+
 ### Print AprilTags
 
 1. `POST /api/v1/calibration/apriltag/generate-pdf` with `size_mm` and `safe_zone_padding_mm`
 2. Print at **100% scale** (Actual size — disable "Fit to page")
 3. Verify tag edge length with a ruler (±0.5 mm)
 4. Cut along dashed borders; align tag **center** to each bed corner
+
+**Laser-burned tags:** AprilTags require a **white quiet zone** (~25% border) around the black square. Generate a PNG with `POST /api/v1/calibration/apriltag/generate-png` (`size_mm`, `safe_zone_mm`), paint or mask the white square on wood, then burn only the inner pattern. Pattern-only burns on tan wood without a white border are unreliable even with multi-pass detection.
 
 ## Calibration Example
 
@@ -211,15 +216,17 @@ POST /api/v1/calibration/apriltag
 }
 ```
 
-The response includes a `work_area` block with derived `width_mm` and `height_mm`, plus `tag_size_validation` showing per-tag measured edge lengths after scale refinement. These are saved in `config/calibration.json` and drive the debug grid overlay.
+By default, work-area width and height are **measured from the camera** (tag center spacing from AprilTag detections). The response includes a `work_area` block with derived `width_mm` and `height_mm`, plus `tag_size_validation` showing per-tag measured edge lengths. These are saved in `config/calibration.json` and drive the debug grid overlay.
 
-`size_mm` is treated as ground truth. Calibration uses **per-axis scale** from horizontal vs vertical tag edges (important at wide FOV) and iterates width/height independently until tag edges measure the declared size on both axes (within `calibration.scale_refinement_tolerance_mm`, default 0.5 mm). Work-area width/height are re-derived from the final homography before save. If refinement cannot fully converge, calibration still saves but the response `message` includes a warning — check print quality, tag flatness, and detection.
+Work-area dimensions are **not** inflated to force tag edges to match `size_mm`. Bed size comes from detected tag center spacing; `size_mm` is ground truth for **reporting** tag edge fit in `tag_size_validation`. If measured edges deviate from `size_mm`, calibration still saves but the response `message` may include a warning — check print quality, tag flatness, and detection.
+
+Work-area width/height are re-derived from the final homography (axis-aligned center spacing) before save.
 
 The `tag_size_validation` block includes `mm_per_px_x`, `mm_per_px_y`, `mean_horizontal_mm`, `mean_vertical_mm`, and per-axis iteration counts.
 
 Use `GET /api/v1/calibration/apriltag/debug-image` to overlay per-tag measured sizes (`30 mm (meas 29.8)`) and work-area side lengths.
 
-Use `POST /api/v1/calibration/apriltag/preview` to verify detections; corner indices `0–3` are drawn on each tag. On failure, the API returns structured JSON with center vs corner error breakdown.
+Use `POST /api/v1/calibration/apriltag/preview` to verify detections; corner indices `0–3` are drawn on each tag. Use `GET /api/v1/calibration/apriltag/detections` for JSON diagnostics (`detected_ids`, `missing_ids`, `decision_margin`, current `exposure_ms`). On failure, the calibration API returns structured JSON with `detected_ids`, `missing_ids`, and an actionable `hint`.
 
 Automated tests in `tests/test_calibration.py` use synthetic tag geometry only (mock detector, no camera). After deploying to the Pi, re-run calibration there to validate with real lens distortion.
 
@@ -390,6 +397,15 @@ Debug mosaic: `GET .../detection/debug-image?stage=all`
 ## Configuration
 
 Edit [config/default.yaml](config/default.yaml) for bed coordinate frame (`origin`, `y_axis`), camera height, model paths, and detection thresholds. Work area size is not configured — it is derived from AprilTag corner placement during calibration.
+
+AprilTag detection tuning (`apriltag` section):
+
+| Key | Purpose |
+|-----|---------|
+| `preprocess` | `none`, `clahe`, or `multi` (default) — grayscale passes before decode |
+| `decode_sharpening` | pupil_apriltags decode sharpening (default 0.25) |
+| `quad_decimate` | Detection resolution scale (1.0 = full) |
+| `quad_sigma` | Gaussian blur before quad detection (default 0.0) |
 
 ## Development (Windows/x86)
 

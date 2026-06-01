@@ -20,7 +20,6 @@ class WorkArea:
     height_mm: float
     origin_tag_id: int
     size_mm: float
-    mode: str = "corner_defined"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -28,7 +27,6 @@ class WorkArea:
             "height_mm": self.height_mm,
             "origin_tag_id": self.origin_tag_id,
             "size_mm": self.size_mm,
-            "mode": self.mode,
         }
 
     @classmethod
@@ -38,7 +36,6 @@ class WorkArea:
             height_mm=float(payload["height_mm"]),
             origin_tag_id=int(payload["origin_tag_id"]),
             size_mm=float(payload["size_mm"]),
-            mode=str(payload.get("mode", "corner_defined")),
         )
 
 
@@ -224,6 +221,23 @@ def _classify_corner_tags(origin_tag_id: int, centers: dict[int, np.ndarray]) ->
     return {"origin": origin_tag_id, "br": br_id, "tl": tl_id, "tr": tr_id}
 
 
+def axis_aligned_center_spacing_mm(
+    mm_centers: dict[int, np.ndarray],
+    origin_tag_id: int,
+    *,
+    image_centers: dict[int, np.ndarray] | None = None,
+) -> tuple[float, float]:
+    """Axis-aligned center spacing: width = delta X to BR, height = delta Y to TL."""
+    classify_centers = image_centers if image_centers is not None else mm_centers
+    roles = _classify_corner_tags(origin_tag_id, classify_centers)
+    origin = mm_centers[roles["origin"]]
+    br = mm_centers[roles["br"]]
+    tl = mm_centers[roles["tl"]]
+    width_mm = abs(float(br[0] - origin[0]))
+    height_mm = abs(float(tl[1] - origin[1]))
+    return width_mm, height_mm
+
+
 def _transform_corners(
     corners_px: np.ndarray,
     corner_transform: Callable[[np.ndarray], np.ndarray] | None,
@@ -273,7 +287,6 @@ def derive_work_area_from_detections(
     origin_center = centers[roles["origin"]]
     br_center = centers[roles["br"]]
     tl_center = centers[roles["tl"]]
-
     width_mm = _anisotropic_span_mm(origin_center, br_center, mm_per_px_x, mm_per_px_y)
     height_mm = _anisotropic_span_mm(origin_center, tl_center, mm_per_px_x, mm_per_px_y)
 
@@ -397,16 +410,14 @@ def finalize_work_area_from_homography(
         if spec.id in image_centers:
             continue
         center = np.array(det["center_px"], dtype=np.float64)
-        undist = undistort_points(center.reshape(1, 2), k, dist, model)[0]
-        image_centers[spec.id] = undist
+        image_centers[spec.id] = undistort_points(center.reshape(1, 2), k, dist, model)[0]
 
     mm_centers = centers_mm_from_homography(matched, homography, intrinsics)
-    roles = _classify_corner_tags(origin_tag_id, image_centers)
-    origin = mm_centers[roles["origin"]]
-    br = mm_centers[roles["br"]]
-    tl = mm_centers[roles["tl"]]
-    width_mm = float(np.linalg.norm(br - origin))
-    height_mm = float(np.linalg.norm(tl - origin))
+    width_mm, height_mm = axis_aligned_center_spacing_mm(
+        mm_centers,
+        origin_tag_id,
+        image_centers=image_centers,
+    )
     if width_mm <= 0 or height_mm <= 0:
         raise ValueError("Derived work area dimensions from homography must be positive")
     return WorkArea(
@@ -436,7 +447,6 @@ def scale_tag_layout(
         height_mm=work_area.height_mm * factor,
         origin_tag_id=work_area.origin_tag_id,
         size_mm=work_area.size_mm,
-        mode=work_area.mode,
     )
     return scaled_specs, scaled_work_area
 
@@ -461,7 +471,6 @@ def scale_tag_layout_anisotropic(
         height_mm=work_area.height_mm * scale_y,
         origin_tag_id=work_area.origin_tag_id,
         size_mm=work_area.size_mm,
-        mode=work_area.mode,
     )
     return scaled_specs, scaled_work_area
 

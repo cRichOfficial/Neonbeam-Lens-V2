@@ -10,7 +10,8 @@ from app.config import get_config_store
 from app.schemas.common import BoundingBox, Point2D
 from app.schemas.detection import DetectionItem, DetectionResponse, WorkAreaSummary
 from app.services.fastsam_detector import FastSamDetector, get_fastsam_detector
-from app.services.pipeline_debug_mosaic import compose_stage_mosaic, encode_jpeg, put_text_outlined
+from app.services.pipeline_debug_mosaic import compose_stage_mosaic, put_text_outlined
+from app.services.image_encoding import encode_jpeg_bgr, encode_jpeg_rgb
 from app.services.shape_detector import RawShapeDetection, ShapeDetector, ShapeDetectorConfig
 from app.services.shape_fastsam_filter import (
     extract_bg_subtract_mask,
@@ -572,13 +573,13 @@ class ShapePipeline:
                 max_height_px=max_height_px,
                 columns=columns,
             )
-            return encode_jpeg(mosaic, quality=quality)
+            return encode_jpeg_bgr(mosaic, quality=quality)
         if stage not in result.stages:
             available = ", ".join(result.stage_order)
             raise KeyError(
                 f"Debug stage '{stage}' not available for this run (active stages: {available})"
             )
-        return encode_jpeg(result.stages[stage], quality=quality)
+        return encode_jpeg_rgb(result.stages[stage], quality=quality)
 
 
 _pipeline: ShapePipeline | None = None

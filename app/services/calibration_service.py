@@ -29,7 +29,6 @@ from app.services.work_area import (
     measure_tag_axis_edge_lengths_mm,
     measure_tag_edge_lengths_mm,
     rebuild_corner_tag_specs,
-    scale_tag_layout_anisotropic,
 )
 
 
@@ -578,9 +577,7 @@ class CalibrationService:
         current_work_area = work_area
         scale_x_iterations = 0
         scale_y_iterations = 0
-        fit: _HomographyFitResult | None = None
 
-        max_iterations = config.calibration.scale_refinement_max_iterations
         tolerance_mm = config.calibration.scale_refinement_tolerance_mm
         max_tag_error_mm = config.calibration.max_tag_size_error_mm
 
@@ -630,46 +627,16 @@ class CalibrationService:
             )
             return specs, finalized
 
-        for iteration in range(max_iterations + 1):
-            matched_current = _matched_with_specs(current_specs)
-            fit = self._fit_homography_calibration(
-                matched=matched_current,
-                matched_tags=matched_tags,
-                tag_specs=current_specs,
-                work_area=current_work_area,
-                frame=frame,
-            )
-            axis_edges = measure_tag_axis_edge_lengths_mm(
-                matched_current,
-                fit.homography,
-                fit.intrinsics,
-            )
-            mean_horizontal = axis_edges.mean_horizontal
-            mean_vertical = axis_edges.mean_vertical
-            horizontal_ok = abs(mean_horizontal - expected_size_mm) <= tolerance_mm
-            vertical_ok = abs(mean_vertical - expected_size_mm) <= tolerance_mm
-            if horizontal_ok and vertical_ok:
-                break
-            if iteration >= max_iterations:
-                break
-            if current_work_area is None or (mean_horizontal <= 0 and mean_vertical <= 0):
-                break
+        matched_current = _matched_with_specs(current_specs)
+        fit = self._fit_homography_calibration(
+            matched=matched_current,
+            matched_tags=matched_tags,
+            tag_specs=current_specs,
+            work_area=current_work_area,
+            frame=frame,
+        )
 
-            scale_x = expected_size_mm / mean_horizontal if mean_horizontal > 0 and not horizontal_ok else 1.0
-            scale_y = expected_size_mm / mean_vertical if mean_vertical > 0 and not vertical_ok else 1.0
-            if scale_x != 1.0:
-                scale_x_iterations += 1
-            if scale_y != 1.0:
-                scale_y_iterations += 1
-            current_specs, current_work_area = scale_tag_layout_anisotropic(
-                current_specs,
-                current_work_area,
-                scale_x,
-                scale_y,
-            )
-
-        assert fit is not None
-        scale_iterations = max(scale_x_iterations, scale_y_iterations)
+        scale_iterations = 0
 
         if current_work_area is not None:
             origin_tag_id = current_work_area.origin_tag_id

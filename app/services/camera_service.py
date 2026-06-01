@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from app.config import ConfigStore, get_config_store
+from app.services.image_encoding import encode_jpeg_rgb as _encode_jpeg_rgb
 
 logger = logging.getLogger(__name__)
 
@@ -59,14 +60,6 @@ def iter_streaming_output_frames(output: StreamingOutput, is_active) -> Any:
             frame = output.frame
         if frame is not None:
             yield frame
-
-
-def _encode_jpeg_rgb(frame: np.ndarray, quality: int) -> bytes:
-    bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR) if frame.shape[2] == 3 else frame
-    ok, encoded = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
-    if not ok:
-        raise RuntimeError("Failed to encode JPEG")
-    return encoded.tobytes()
 
 
 class CameraBackend(ABC):
@@ -193,6 +186,15 @@ class MockCameraBackend(CameraBackend):
             time.sleep(interval)
 
 
+def _pil_image_to_rgb(image) -> np.ndarray:
+    frame = np.asarray(image)
+    if frame.ndim == 2:
+        return cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+    if frame.shape[2] == 4:
+        return cv2.cvtColor(frame, cv2.COLOR_RGBA2RGB)
+    return frame
+
+
 class Picamera2Backend(CameraBackend):
     def __init__(self, config_store: ConfigStore) -> None:
         self.config_store = config_store
@@ -266,17 +268,18 @@ class Picamera2Backend(CameraBackend):
         with self._io_lock:
             return self._picam2.capture_array(stream)
 
+    def _capture_image_rgb(self, stream: str = "main") -> np.ndarray:
+        if self._picam2 is None:
+            raise RuntimeError("Camera not started")
+        with self._io_lock:
+            image = self._picam2.capture_image(stream)
+        return _pil_image_to_rgb(image)
+
     def capture_frame(self) -> np.ndarray:
-        frame = self._capture_array("main")
-        if frame.shape[2] == 4:
-            return cv2.cvtColor(frame, cv2.COLOR_RGBA2RGB)
-        return frame
+        return self._capture_image_rgb("main")
 
     def capture_lores_frame(self) -> np.ndarray:
-        frame = self._capture_array("lores")
-        if frame.shape[2] == 4:
-            return cv2.cvtColor(frame, cv2.COLOR_RGBA2RGB)
-        return frame
+        return self._capture_image_rgb("lores")
 
     def _capture_main_jpeg(self, quality: int) -> bytes:
         if self._picam2 is None:

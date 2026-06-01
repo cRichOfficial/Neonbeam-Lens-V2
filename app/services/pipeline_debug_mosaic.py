@@ -3,6 +3,8 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from app.services.image_encoding import encode_jpeg_rgb, rgb_to_bgr
+
 MOSAIC_BG = (26, 26, 26)
 HEADER_HEIGHT = 28
 
@@ -68,15 +70,8 @@ def compose_stage_mosaic(
 
 
 def encode_jpeg(image: np.ndarray, quality: int = 85) -> bytes:
-    ok, encoded = cv2.imencode(".jpg", _ensure_bgr(image), [int(cv2.IMWRITE_JPEG_QUALITY), quality])
-    if not ok:
-        raise RuntimeError("Failed to encode debug JPEG")
-    return encoded.tobytes()
+    return encode_jpeg_rgb(image, quality=quality)
 
 
 def _ensure_bgr(image: np.ndarray) -> np.ndarray:
-    if image.ndim == 2:
-        return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
-    if image.shape[2] == 4:
-        return cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
-    return image
+    return rgb_to_bgr(image)
